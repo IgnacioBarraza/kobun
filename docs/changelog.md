@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.3.0-alpha.4 (2026-08-31)
+
+### Features
+
+- Add extraction functionality for images from PDFs
+  ([`35ecc30`](https://github.com/IgnacioBarraza/kobun/commit/35ecc3076ab40060e4b96955d1dbaf245465f34d))
+
+
 ## v0.3.0-alpha.3 (2026-08-20)
 
 ### Bug Fixes
