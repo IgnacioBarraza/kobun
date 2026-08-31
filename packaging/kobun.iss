@@ -13,7 +13,7 @@
 ; directory.
 
 #define MyAppName "Kobun"
-#define MyAppVersion "0.3.0-alpha.3"
+#define MyAppVersion "0.3.0-alpha.4"
 #define MyAppPublisher "Ignacio Barraza"
 #define MyAppExeName "kobun.exe"
 
