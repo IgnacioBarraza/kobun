@@ -20,6 +20,9 @@ from kobun.domain.history.exceptions.invalid_export_record_exception import (
 )
 from kobun.domain.pdf.exceptions.encrypted_pdf_exception import EncryptedPdfException
 from kobun.domain.pdf.exceptions.file_open_exception import FileOpenException
+from kobun.domain.pdf.exceptions.invalid_extraction_exception import (
+    InvalidExtractionException,
+)
 from kobun.domain.pdf.exceptions.invalid_output_path_exception import InvalidOutputPathException
 from kobun.domain.pdf.exceptions.invalid_page_range_exception import InvalidPageRangeException
 from kobun.domain.pdf.exceptions.invalid_pdf_exception import InvalidPdfException
@@ -41,6 +44,7 @@ EXPECTED_ERRORS = (
     InvalidPdfMetadataException,
     InvalidPageRangeException,
     InvalidOutputPathException,
+    InvalidExtractionException,
     FileOpenException,
     InvalidExportRecordException,
 )

@@ -7,10 +7,14 @@ from uuid import UUID
 
 from kobun.application.interfaces.history_repository import HistoryRepository
 from kobun.domain.history.entities.export_record import ExportRecord
+from kobun.domain.history.value_objects.export_kind import ExportKind
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.shared.config.app_settings import MAX_HISTORY_ENTRIES
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+"""Version 2 added `kind` and `item_count`, when the history stopped being
+only splits. Entries written by version 1 carry neither and are read as
+single-file splits, which is exactly what they were."""
 
 
 class JsonHistoryRepository(HistoryRepository):
@@ -128,6 +132,8 @@ class JsonHistoryRepository(HistoryRepository):
             "size_bytes": record.size_bytes,
             "created_at": record.created_at.isoformat(),
             "title": record.title,
+            "kind": record.kind.value,
+            "item_count": record.item_count,
         }
 
     @staticmethod
@@ -145,6 +151,11 @@ class JsonHistoryRepository(HistoryRepository):
                 size_bytes=int(entry["size_bytes"]),
                 created_at=datetime.fromisoformat(entry["created_at"]),
                 title=entry.get("title"),
+                # Read with `get` and not by subscript: this is the whole
+                # migration from version 1, whose entries have no kind and were
+                # all splits of a single file.
+                kind=ExportKind(entry.get("kind", ExportKind.SPLIT.value)),
+                item_count=int(entry.get("item_count", 1)),
             )
         except Exception:
             # A broken entry must not stop the others from being read.

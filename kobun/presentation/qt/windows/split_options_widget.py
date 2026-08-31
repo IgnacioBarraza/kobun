@@ -46,6 +46,12 @@ class SplitOptionsWidget(QWidget):
         # and it is not what the user needs to edit.
         self._directory: Optional[Path] = None
 
+        # The last name Kobun suggested. Without it there is no way to tell a
+        # suggestion apart from something the user typed, and the field could
+        # only ever be filled once: changing the range afterwards left the file
+        # named after the previous one.
+        self._suggested_name: Optional[str] = None
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -158,15 +164,27 @@ class SplitOptionsWidget(QWidget):
 
     def set_suggested_destination(self, path: Optional[Path]) -> None:
         """
-        Prefills the suggested destination. It never overwrites what the user
-        typed.
+        Prefills the suggested destination, replacing an earlier suggestion but
+        never something the user typed.
+
+        The distinction is what makes the field track the range: typing "1-3"
+        and then correcting it to "1-4" has to rename the output, while a name
+        chosen by hand must survive every later keystroke in the range field.
         """
-        if path is not None and not self.output_name:
-            self.set_destination(path)
+        if path is None:
+            return
+
+        current = self.output_name
+        if current and current != self._suggested_name:
+            return
+
+        self.set_destination(path)
+        self._suggested_name = path.name
 
     def clear(self) -> None:
         self.input_selection.clear()
         self.input_output.clear()
+        self._suggested_name = None
 
     def set_enabled(self, enabled: bool) -> None:
         self.input_selection.setEnabled(enabled)

@@ -5,14 +5,15 @@
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Desktop utility that extracts page ranges from a PDF — **including
-discontinuous ones, like `1-5,10-15,20`** — into a new file, without touching
-the original. Built for the case that PDF viewers handle badly: pulling three
-chapters out of a 600 page book in one pass.
+Desktop utility that pulls what you need out of a PDF without touching the
+original: **page ranges — including discontinuous ones, like `1-5,10-15,20` —**
+into a new file, or **the images of those pages** into a folder. Built for the
+cases PDF viewers handle badly: three chapters out of a 600 page book in one
+pass, or every figure in a chapter without screenshotting them one by one.
 
 Written in Python with **PySide6 (Qt)** and **PyMuPDF**, on a layered
-architecture where the domain knows neither of them: **3,500 lines of code held
-up by 2,700 of tests, 346 of which run with no dependencies installed at all.**
+architecture where the domain knows neither of them: **7,200 lines of code held
+up by 7,400 of tests, 546 of which run with no dependencies installed at all.**
 
 |                                                           |                                                             |
 | --------------------------------------------------------- | ----------------------------------------------------------- |
@@ -73,6 +74,38 @@ kobun
 - Page indices are 1-based and inclusive, as printed in the document
 - Output metadata derived from the source document, traceable back to it
 
+### Extracting images
+
+- **Figures, whatever they are made of.** The default mode returns the stored
+  images *and* the vector artwork — a chart drawn with lines and fills is not an
+  image inside the PDF, so it is rendered from the region of the page it
+  occupies. Cropping the figure, not screenshotting the page
+- The region is worked out from the drawings on the page, with the page border,
+  the rules and the body text kept out, and the axis labels brought in: a chart
+  whose labels are cut off is a chart nobody can read
+- A stricter mode returns **only** what the PDF stores, so nothing on disk was
+  painted by Kobun; a third renders whole pages, for when even that is what you
+  want
+- Never a lossy re-encode: a stored JPEG comes out as the identical JPEG, and an
+  image the PDF keeps as raw samples is wrapped losslessly into PNG
+- An image reused across pages —a header logo— comes out **once**, not once per
+  page, and a border drawn around a photo does not yield a second, rendered copy
+  of it
+- Invisible 1x1 spacers and hairline rules are filtered out, so the folder holds
+  figures and not slivers
+- **One folder you choose, everything in it.** The destination does not depend on
+  the page selection, so extracting 1-5 and then 6-10 collects both in the same
+  place instead of making a folder per run. Files already in that folder are left
+  alone, and re-extracting the same pages replaces its own output rather than
+  piling up copies
+- Files are named `book_p007_img02.png` for a stored image and
+  `book_p007_fig01.png` for a rendered figure, zero-padded so the folder's
+  alphabetical order matches the document's, and telling the originals apart from
+  the renders at a glance
+- **Finding nothing is a result, not an error**: the screen says the pages hold
+  no images or figures and points at the mode that would work, instead of leaving
+  an empty folder behind
+
 ### Choosing where it lands
 
 - Suggested output filename: `book.pdf` + `1-5,10-15` → `book_1-5_10-15.pdf`,
@@ -93,6 +126,11 @@ kobun
 - Drag & drop, or pick a file from the system dialog. It also opens a PDF passed
   on the command line or chosen through the desktop's "Open with"
 - Long operations run on a worker thread, so the window never freezes
+- **When an export finishes** a result card names what was produced and offers
+  to open it or show it in its folder, and the taskbar entry asks for attention
+  if the window is not the focused one. Deliberately not a modal: an export is
+  repetitive, and a dialog per export is a dialog people learn to dismiss
+  without reading
 - Expected errors are reported as warnings; unexpected ones show a generic
   message and keep the technical detail for reporting
 - **10 themes**, 5 light and 5 dark, most of them built around a Japanese
@@ -104,8 +142,9 @@ kobun
 - Persistent history of the last 50 exports, stored per-OS in the user's data
   directory
 - Entries whose file was moved or deleted are flagged, not dropped
-- Open an exported PDF with the system viewer, or drop a single entry, straight
-  from the list
+- Open an exported PDF with the system viewer —or show an extraction's folder
+  in the file manager, which is not the same gesture— or drop a single entry,
+  straight from the list
 
 ---
 
@@ -162,6 +201,9 @@ Details, and everything about building and releasing, live in
 3. Click **DIVIDIR PDF**
 4. Receive a PDF with exactly those pages, in that order
 
+Or, on the **Extraer imágenes** screen, the same selection gives you a folder
+with the figures of those pages — or with each page rendered as a PNG.
+
 From code:
 
 ```python
@@ -192,6 +234,10 @@ Done:
 - [x] Installable package with a `kobun` entry point
 - [x] Windows and Linux packaging: portable `.exe`, `.deb`, Inno Setup installer
 - [x] Automated versioning, changelog and releases derived from the commits
+- [x] Image extraction: stored images, vector figures cropped from the page, or
+      whole pages rendered to PNG
+- [x] Result card with "open" and "show in folder", plus a taskbar notice when
+      an export finishes out of focus
 
 Next:
 
@@ -199,6 +245,8 @@ Next:
 - [ ] Live page count while typing a selection
 - [ ] Repeat an export from the history (the selection is already stored as a
       Value Object precisely for this)
+- [ ] Table extraction to CSV — `find_tables()` exists in PyMuPDF, but detection
+      is approximate and needs a UI honest about that before it ships
 - [ ] Merge PDFs and extract text — implemented in the repository layer, not yet
       exposed in the interface
 - [ ] Batch splitting

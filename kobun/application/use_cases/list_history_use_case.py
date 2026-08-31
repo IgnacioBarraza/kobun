@@ -27,9 +27,21 @@ class ListHistoryUseCase:
         records = self._history_repository.list_recent(limit)
 
         return [
-            HistoryEntry(
-                record=record,
-                is_available=self._file_storage.is_file(record.output_path),
-            )
+            HistoryEntry(record=record, is_available=self._is_available(record))
             for record in records
         ]
+
+    def _is_available(self, record) -> bool:
+        """
+        Availability is checked against the shape the entry claims to have, not
+        merely against existence.
+
+        A split whose PDF was replaced by a folder of the same name is *not*
+        available: the document is gone. And an extraction's output is a folder
+        from the start, so asking whether it is a file would mark every image
+        export as dead the moment it was written.
+        """
+        if record.outputs_directory:
+            return self._file_storage.is_directory(record.output_path)
+
+        return self._file_storage.is_file(record.output_path)

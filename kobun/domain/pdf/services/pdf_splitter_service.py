@@ -1,18 +1,26 @@
 from pathlib import PurePath
 
 from kobun.domain.pdf.entities.pdf_document import PdfDocument
-from kobun.domain.pdf.exceptions.invalid_page_range_exception import InvalidPageRangeException
-from kobun.domain.pdf.exceptions.invalid_pdf_exception import InvalidPdfException
+from kobun.domain.pdf.services import selection_rules
+from kobun.domain.pdf.services.filename_rules import (
+    FALLBACK_STEM,
+    PDF_SUFFIX,
+    sanitize_filename,
+    sanitized_stem,
+)
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.domain.pdf.value_objects.pdf_metadata import PdfMetadata
 
 CREATOR_NAME = "Kobun PDF Utility"
-PDF_SUFFIX = ".pdf"
-FALLBACK_STEM = "kobun_split"
 
-# Characters Windows forbids. Filtered always, not only on Windows, so a PDF
-# exported on Linux stays copyable to another system.
-_ILLEGAL_FILENAME_CHARS = frozenset('<>:"/\\|?*')
+# Re-exported: several modules import PDF_SUFFIX and FALLBACK_STEM from here,
+# which was their home before the naming rules were shared with the extractor.
+__all__ = [
+    "CREATOR_NAME",
+    "FALLBACK_STEM",
+    "PDF_SUFFIX",
+    "PdfSplitterService",
+]
 
 
 class PdfSplitterService:
@@ -28,23 +36,13 @@ class PdfSplitterService:
         """
         Checks the document is in a state that allows manipulation.
         """
-        if document.page_count is None or document.page_count <= 0:
-            raise InvalidPdfException("El documento no tiene páginas válidas para procesar.")
-
-        if not document.storage_path.exists():
-            raise InvalidPdfException(f"El archivo físico no existe en: {document.storage_path}")
+        selection_rules.validate_document_for_processing(document)
 
     def validate_selection(self, document: PdfDocument, selection: PageSelection) -> None:
         """
         Ensures every requested page exists within the document.
         """
-        self.validate_document_for_processing(document)
-
-        if selection.max_page > document.page_count:
-            raise InvalidPageRangeException(
-                f"Rango fuera de límites: El PDF tiene {document.page_count} páginas, "
-                f"pero se pidió hasta la {selection.max_page}."
-            )
+        selection_rules.validate_selection(document, selection)
 
     def suggest_output_filename(self, source_doc: PdfDocument, selection: PageSelection) -> str:
         """
@@ -55,7 +53,7 @@ class PdfSplitterService:
         decision, so it lives in the domain. The UI can offer it as an editable
         default in the save dialog.
         """
-        stem = self._sanitize_filename(PurePath(source_doc.filename).stem) or FALLBACK_STEM
+        stem = sanitized_stem(source_doc.filename)
         suffix = str(selection).replace(",", "_")
 
         return f"{stem}_{suffix}{PDF_SUFFIX}"
@@ -63,14 +61,10 @@ class PdfSplitterService:
     @staticmethod
     def _sanitize_filename(value: str) -> str:
         """
-        Replaces invalid characters with "_" and trims trailing dots and
-        spaces, which Windows does not accept either.
+        Kept as a thin delegate: the rule now lives in `filename_rules`, shared
+        with the asset extractor.
         """
-        cleaned = "".join(
-            "_" if char in _ILLEGAL_FILENAME_CHARS or ord(char) < 32 else char
-            for char in value
-        )
-        return cleaned.strip(" .")
+        return sanitize_filename(value)
 
     def prepare_split_metadata(self, source_doc: PdfDocument, selection: PageSelection) -> PdfMetadata:
         """

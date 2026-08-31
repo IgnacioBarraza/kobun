@@ -17,6 +17,7 @@ MACOS = "darwin"
 
 MACOS_OPENER = "open"
 LINUX_OPENER = "xdg-open"
+WINDOWS_OPENER = "explorer"
 
 
 class LocalFileStorage(FileStorage):
@@ -82,6 +83,98 @@ class LocalFileStorage(FileStorage):
         raise InvalidOutputPathException(
             f"No se encontró un nombre libre para {path.name} tras {_MAX_RENAME_ATTEMPTS} intentos."
         )
+
+    def create_directory(self, directory: Path) -> None:
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise InvalidOutputPathException(
+                f"No se pudo crear la carpeta '{directory}': {e}"
+            ) from e
+
+    def directory_has_files(self, directory: Path) -> bool:
+        if not directory.is_dir():
+            return False
+
+        # `next` over the iterator instead of listing: a folder with thousands
+        # of files is answered by looking at the first entry.
+        return next(directory.iterdir(), None) is not None
+
+    def remove_directory_if_empty(self, directory: Path) -> bool:
+        if not directory.is_dir() or self.directory_has_files(directory):
+            return False
+
+        try:
+            directory.rmdir()
+        except OSError:
+            # Not being able to clean up is not worth failing an export that
+            # already did what it was asked to.
+            return False
+
+        return True
+
+    def write_bytes(self, path: Path, data: bytes) -> None:
+        try:
+            path.write_bytes(data)
+        except OSError as e:
+            raise InvalidOutputPathException(
+                f"No se pudo escribir '{path.name}': {e}"
+            ) from e
+
+    def reveal_in_file_manager(self, path: Path) -> None:
+        if not path.exists():
+            raise FileOpenException(f"La ruta ya no está disponible: {path}")
+
+        try:
+            self._spawn(self.reveal_command(path))
+        except FileOpenException:
+            raise
+        except Exception as e:
+            raise FileOpenException(f"No se pudo mostrar '{path.name}': {e}") from e
+
+    def reveal_command(self, path: Path) -> List[str]:
+        """
+        The command that shows a path in the system's file manager.
+
+        A **folder** is opened as itself on every platform: selecting it inside
+        its parent is technically closer to "reveal", but not what someone
+        clicking "open folder" wants.
+
+        For a **file** the platforms disagree:
+
+        - Windows and macOS can select it inside its folder.
+        - On Linux there is no portable way to do that —it depends on which file
+          manager is installed— so the containing folder is opened. Opening the
+          right folder is worth more than opening nothing.
+
+        Windows note: `explorer` also exits with code 1 on success, which is why
+        the launch is fire-and-forget and its status is never checked.
+        """
+        if path.is_dir():
+            return [self._reveal_opener(), str(path)]
+
+        if self.is_windows:
+            # Explorer's own syntax, kept as a single argument so Popen does not
+            # split it on the comma. It needs backslashes, which is what
+            # str(WindowsPath) gives: a forward-slash path is the known way to
+            # make this silently open the wrong window.
+            #
+            # Not verified on a real Windows machine. If selecting ever misses,
+            # the safe fallback is dropping "/select," and passing the parent
+            # folder, which is all the button promises anyway.
+            return ["explorer", f"/select,{path}"]
+
+        if self.is_macos:
+            return [MACOS_OPENER, "-R", str(path)]
+
+        return [LINUX_OPENER, str(path.parent)]
+
+    def _reveal_opener(self) -> str:
+        """The command that opens a folder as itself, per platform."""
+        if self.is_windows:
+            return WINDOWS_OPENER
+
+        return MACOS_OPENER if self.is_macos else LINUX_OPENER
 
     def open_in_default_app(self, path: Path) -> None:
         if not path.is_file():

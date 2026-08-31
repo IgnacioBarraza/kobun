@@ -3,20 +3,26 @@ from typing import List, Optional
 
 from PySide6.QtWidgets import QApplication
 
+from kobun.application.services.output_directory_resolver import OutputDirectoryResolver
 from kobun.application.services.output_path_resolver import OutputPathResolver
 from kobun.application.services.theme_service import ThemeService
+from kobun.application.use_cases.extract_assets_use_case import ExtractAssetsUseCase
 from kobun.application.use_cases.list_history_use_case import ListHistoryUseCase
 from kobun.application.use_cases.load_pdf_use_case import LoadPdfUseCase
+from kobun.application.use_cases.record_extraction_use_case import RecordExtractionUseCase
 from kobun.application.use_cases.record_split_use_case import RecordSplitUseCase
 from kobun.application.use_cases.split_pdf_use_case import SplitPdfUseCase
+from kobun.domain.pdf.services.asset_extractor_service import AssetExtractorService
 from kobun.domain.pdf.services.pdf_splitter_service import PdfSplitterService
 from kobun.infrastructure.config.infrastructure_settings import AppDirectories
 from kobun.infrastructure.filesystem.local_file_storage import LocalFileStorage
+from kobun.infrastructure.pdf_engine.pdf_document_opener import PdfDocumentOpener
 from kobun.infrastructure.pdf_engine.pdf_engine_adapter import PdfEngineAdapter
 from kobun.infrastructure.repositories.json_history_repository import JsonHistoryRepository
 from kobun.infrastructure.repositories.json_preferences_repository import (
     JsonPreferencesRepository,
 )
+from kobun.infrastructure.repositories.pdf_asset_extractor_impl import PyMuPdfAssetExtractor
 from kobun.infrastructure.repositories.pdf_repository_impl import PyMuPdfRepository
 from kobun.infrastructure.ui.theme_loader import JsonThemeSource
 from kobun.presentation.qt.app_icon import load_app_icon
@@ -41,8 +47,16 @@ class KobunApplication:
         self._directories = directories or AppDirectories()
 
         file_storage = LocalFileStorage()
-        pdf_repository = PyMuPdfRepository(PdfEngineAdapter())
+
+        # One engine and one opener shared by the repository and the extractor,
+        # so both reject the same files with the same messages.
+        engine = PdfEngineAdapter()
+        opener = PdfDocumentOpener(engine)
+
+        pdf_repository = PyMuPdfRepository(engine, opener)
+        asset_extractor = PyMuPdfAssetExtractor(engine, opener)
         pdf_service = PdfSplitterService()
+        asset_service = AssetExtractorService()
 
         self._history_repository = JsonHistoryRepository(
             self._directories.data_file(HISTORY_FILENAME)
@@ -61,6 +75,14 @@ class KobunApplication:
             record_use_case=RecordSplitUseCase(self._history_repository),
             list_history_use_case=ListHistoryUseCase(self._history_repository, file_storage),
             file_storage=file_storage,
+            extract_use_case=ExtractAssetsUseCase(
+                pdf_repository=pdf_repository,
+                asset_extractor=asset_extractor,
+                asset_service=asset_service,
+                output_directory_resolver=OutputDirectoryResolver(file_storage),
+                file_storage=file_storage,
+            ),
+            record_extraction_use_case=RecordExtractionUseCase(self._history_repository),
         )
 
     def build_window(self) -> MainWindow:
