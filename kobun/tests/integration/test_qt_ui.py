@@ -17,15 +17,29 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QThreadPool  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
+from kobun.application.services.output_directory_resolver import (  # noqa: E402
+    OutputDirectoryResolver,
+)
 from kobun.application.services.output_path_resolver import OutputPathResolver  # noqa: E402
 from kobun.application.services.theme_service import ThemeService  # noqa: E402
+from kobun.application.use_cases.extract_assets_use_case import (  # noqa: E402
+    ExtractAssetsUseCase,
+)
 from kobun.application.use_cases.list_history_use_case import ListHistoryUseCase  # noqa: E402
 from kobun.application.use_cases.load_pdf_use_case import LoadPdfUseCase  # noqa: E402
+from kobun.application.use_cases.record_extraction_use_case import (  # noqa: E402
+    RecordExtractionUseCase,
+)
 from kobun.application.use_cases.record_split_use_case import RecordSplitUseCase  # noqa: E402
 from kobun.application.use_cases.split_pdf_use_case import SplitPdfUseCase  # noqa: E402
+from kobun.domain.pdf.services.asset_extractor_service import (  # noqa: E402
+    AssetExtractorService,
+)
 from kobun.domain.pdf.services.pdf_splitter_service import PdfSplitterService  # noqa: E402
+from kobun.domain.pdf.value_objects.extraction_mode import ExtractionMode  # noqa: E402
 from kobun.domain.pdf.value_objects.overwrite_policy import OverwritePolicy  # noqa: E402
 from kobun.infrastructure.filesystem.local_file_storage import LocalFileStorage  # noqa: E402
+from kobun.infrastructure.pdf_engine.pdf_document_opener import PdfDocumentOpener  # noqa: E402
 from kobun.infrastructure.pdf_engine.pdf_engine_adapter import PdfEngineAdapter  # noqa: E402
 from kobun.infrastructure.repositories.json_history_repository import (  # noqa: E402
     JsonHistoryRepository,
@@ -33,9 +47,13 @@ from kobun.infrastructure.repositories.json_history_repository import (  # noqa:
 from kobun.infrastructure.repositories.json_preferences_repository import (  # noqa: E402
     JsonPreferencesRepository,
 )
+from kobun.infrastructure.repositories.pdf_asset_extractor_impl import (  # noqa: E402
+    PyMuPdfAssetExtractor,
+)
 from kobun.infrastructure.repositories.pdf_repository_impl import PyMuPdfRepository  # noqa: E402
 from kobun.infrastructure.ui.theme_loader import JsonThemeSource  # noqa: E402
 from kobun.presentation.qt.windows.main_window import MainWindow  # noqa: E402
+from kobun.presentation.qt.windows.ui_main_window import EXTRACT_PAGE  # noqa: E402
 from kobun.presentation.viewmodels.pdf_view_model import PdfViewModel  # noqa: E402
 from kobun.shared.config.theme_settings import (  # noqa: E402
     AVAILABLE_THEMES,
@@ -67,6 +85,47 @@ def source_pdf(tmp_path):
     return path
 
 
+@pytest.fixture
+def image_pdf(tmp_path):
+    """
+    A PDF with real embedded images, which `source_pdf` deliberately has none
+    of: the text-only one is what exercises the "found nothing" path.
+    """
+    import struct
+    import zlib
+
+    def png(width, height, colour):
+        raw = b"".join(b"\x00" + bytes(colour) * width for _ in range(height))
+
+        def chunk(tag, data):
+            body = tag + data
+            return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw))
+            + chunk(b"IEND", b"")
+        )
+
+    path = tmp_path / "conimagenes.pdf"
+    doc = pymupdf.open()
+
+    for number in range(1, 5):
+        page = doc.new_page()
+        page.insert_text((72, 120), f"PAGINA {number}", fontsize=28)
+        if number in (2, 3):
+            page.insert_image(
+                pymupdf.Rect(72, 200, 232, 320),
+                stream=png(160, 120, (30, 110, 40 + number * 40)),
+            )
+
+    doc.save(path)
+    doc.close()
+
+    return path
+
+
 class DialogRecorder:
     """
     Stands in for the modal dialogs: without this, a QMessageBox waiting for a
@@ -91,16 +150,21 @@ def dialogs():
     return DialogRecorder()
 
 
-@pytest.fixture
-def window(qt_app, tmp_path, dialogs):
-    file_storage = LocalFileStorage()
-    pdf_repository = PyMuPdfRepository(PdfEngineAdapter())
+def build_view_model(history_repository, file_storage=None):
+    """
+    The whole graph a window needs, assembled the same way KobunApplication
+    does it. In one place because two tests build a window by hand, and a
+    constructor that grows a dependency should not have to be chased through
+    the file.
+    """
+    file_storage = file_storage or LocalFileStorage()
+    engine = PdfEngineAdapter()
+    opener = PdfDocumentOpener(engine)
+
+    pdf_repository = PyMuPdfRepository(engine, opener)
     pdf_service = PdfSplitterService()
 
-    history_repository = JsonHistoryRepository(tmp_path / "datos" / "history.json")
-    preferences = JsonPreferencesRepository(tmp_path / "config" / "preferences.json")
-
-    view_model = PdfViewModel(
+    return PdfViewModel(
         load_use_case=LoadPdfUseCase(pdf_repository, pdf_service),
         split_use_case=SplitPdfUseCase(
             pdf_repository, pdf_service, OutputPathResolver(file_storage)
@@ -108,16 +172,92 @@ def window(qt_app, tmp_path, dialogs):
         record_use_case=RecordSplitUseCase(history_repository),
         list_history_use_case=ListHistoryUseCase(history_repository, file_storage),
         file_storage=file_storage,
+        extract_use_case=ExtractAssetsUseCase(
+            pdf_repository=pdf_repository,
+            asset_extractor=PyMuPdfAssetExtractor(engine, opener),
+            asset_service=AssetExtractorService(),
+            output_directory_resolver=OutputDirectoryResolver(file_storage),
+            file_storage=file_storage,
+        ),
+        record_extraction_use_case=RecordExtractionUseCase(history_repository),
     )
 
+
+class AttentionRecorder:
+    """
+    Stands in for the taskbar alert, which is invisible offscreen and therefore
+    unobservable unless it is injected.
+    """
+
+    def __init__(self):
+        self.calls = 0
+
+    def __call__(self, window):
+        self.calls += 1
+
+
+@pytest.fixture
+def attention():
+    return AttentionRecorder()
+
+
+@pytest.fixture
+def window(qt_app, tmp_path, dialogs, attention):
+    history_repository = JsonHistoryRepository(tmp_path / "datos" / "history.json")
+    preferences = JsonPreferencesRepository(tmp_path / "config" / "preferences.json")
+
     window = MainWindow(
-        view_model,
+        build_view_model(history_repository),
         ThemeService(preferences, JsonThemeSource()),
         history_repository,
         show_error=dialogs.show_error,
         ask_confirmation=dialogs.ask_confirmation,
+        request_attention=attention,
     )
 
+    window.show()
+    yield window
+
+    window.close()
+
+
+class SpawnRecorder:
+    """
+    Catches the file manager and viewer launches, so pressing "open folder" in a
+    test does not actually spawn xdg-open on the machine running the suite.
+    """
+
+    def __init__(self):
+        self.commands = []
+
+    def __call__(self, command):
+        self.commands.append(list(command))
+
+
+@pytest.fixture
+def spawns():
+    return SpawnRecorder()
+
+
+@pytest.fixture
+def launcher_window(qt_app, tmp_path, dialogs, attention, spawns):
+    """
+    Like `window`, but with the launching side of FileStorage intercepted. Kept
+    separate so the tests that never press an "open" button are not paying for
+    the extra wiring.
+    """
+    history_repository = JsonHistoryRepository(tmp_path / "datos" / "history.json")
+    preferences = JsonPreferencesRepository(tmp_path / "config" / "preferences.json")
+    storage = LocalFileStorage(platform="linux", spawn=spawns)
+
+    window = MainWindow(
+        build_view_model(history_repository, file_storage=storage),
+        ThemeService(preferences, JsonThemeSource()),
+        history_repository,
+        show_error=dialogs.show_error,
+        ask_confirmation=dialogs.ask_confirmation,
+        request_attention=attention,
+    )
     window.show()
     yield window
 
@@ -481,20 +621,9 @@ def test_building_the_selector_does_not_save_a_preference(qt_app, tmp_path, dial
     from kobun.presentation.qt.windows.main_window import MainWindow as Window
 
     prefs_path = tmp_path / "prefs.json"
-    file_storage = LocalFileStorage()
-    pdf_repository = PyMuPdfRepository(PdfEngineAdapter())
-    pdf_service = PdfSplitterService()
     history_repository = JsonHistoryRepository(tmp_path / "datos" / "history.json")
 
-    view_model = PdfViewModel(
-        load_use_case=LoadPdfUseCase(pdf_repository, pdf_service),
-        split_use_case=SplitPdfUseCase(
-            pdf_repository, pdf_service, OutputPathResolver(file_storage)
-        ),
-        record_use_case=RecordSplitUseCase(history_repository),
-        list_history_use_case=ListHistoryUseCase(history_repository, file_storage),
-        file_storage=file_storage,
-    )
+    view_model = build_view_model(history_repository)
     window = Window(
         view_model,
         ThemeService(JsonPreferencesRepository(prefs_path), JsonThemeSource()),
@@ -716,3 +845,575 @@ def test_the_window_shows_the_package_version(window):
 
 def test_the_version_label_is_not_empty(window):
     assert window.ui.label_version.text().strip() not in ("", "v")
+# =========================
+# Tarjeta de resultado
+# =========================
+
+def test_no_result_card_is_shown_before_exporting(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    assert window.ui.split_result.isVisible() is False
+    assert window.ui.extract_result.isVisible() is False
+
+
+def test_a_split_shows_what_it_produced_and_how_to_reach_it(window, qt_app, source_pdf):
+    """
+    The gap the feedback pointed at: the status line said it worked, but the only
+    way to reach the file was switching to the history tab.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    card = window.ui.split_result
+
+    assert card.isVisible() is True
+    assert "libro_1-3.pdf" in card.label_title.text()
+    assert card.btn_open.isVisibleTo(card) is True
+    assert card.btn_reveal.isVisibleTo(card) is True
+
+
+def test_the_card_reports_pages_and_size(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    detail = window.ui.split_result.label_detail.toolTip()
+
+    assert "3 páginas" in detail
+    assert "KB" in detail or "B" in detail
+
+
+def test_the_card_disappears_when_a_new_document_is_loaded(window, qt_app, source_pdf, tmp_path):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+    assert window.ui.split_result.isVisible() is True
+
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(otro)
+    doc.close()
+    load(window, qt_app, otro)
+
+    assert window.ui.split_result.isVisible() is False, "Describía un archivo que ya no está en pantalla"
+
+
+def test_the_card_disappears_while_the_next_export_runs(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("5-7")
+    window.ui.btn_process.click()
+    durante = window.ui.split_result.isVisible()
+    settle(qt_app)
+
+    assert durante is False
+    assert "libro_5-7.pdf" in window.ui.split_result.label_title.text()
+
+
+def test_the_open_button_launches_the_generated_pdf(launcher_window, qt_app, source_pdf, spawns):
+    load(launcher_window, qt_app, source_pdf)
+    launcher_window.ui.split_options.input_selection.setText("1-3")
+    launcher_window.ui.btn_process.click()
+    settle(qt_app)
+
+    launcher_window.ui.split_result.btn_open.click()
+
+    assert spawns.commands == [["xdg-open", str(source_pdf.parent / "libro_1-3.pdf")]]
+
+
+def test_the_folder_button_shows_the_pdf_in_its_folder(launcher_window, qt_app, source_pdf, spawns):
+    load(launcher_window, qt_app, source_pdf)
+    launcher_window.ui.split_options.input_selection.setText("1-3")
+    launcher_window.ui.btn_process.click()
+    settle(qt_app)
+
+    launcher_window.ui.split_result.btn_reveal.click()
+
+    assert spawns.commands == [["xdg-open", str(source_pdf.parent)]]
+
+
+def test_a_deleted_export_reports_instead_of_crashing(launcher_window, qt_app, source_pdf, dialogs):
+    """The file can be gone by the time the button is pressed."""
+    load(launcher_window, qt_app, source_pdf)
+    launcher_window.ui.split_options.input_selection.setText("1-3")
+    launcher_window.ui.btn_process.click()
+    settle(qt_app)
+
+    (source_pdf.parent / "libro_1-3.pdf").unlink()
+    launcher_window.ui.split_result.btn_open.click()
+
+    assert len(dialogs.errors) == 1
+    assert "ya no está disponible" in launcher_window.ui.label_status.text()
+
+
+# =========================
+# Aviso de que terminó
+# =========================
+
+def test_a_finished_split_asks_for_the_window_s_attention(window, qt_app, source_pdf, attention):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    assert attention.calls == 1
+
+
+def test_loading_a_document_does_not_ask_for_attention(window, qt_app, source_pdf, attention):
+    """Only a finished export does; the user is right there when they drop a file."""
+    load(window, qt_app, source_pdf)
+
+    assert attention.calls == 0
+
+
+def test_a_failed_split_does_not_ask_for_attention(window, qt_app, source_pdf, tmp_path, attention):
+    taken = tmp_path / "ocupado.pdf"
+    taken.write_bytes(b"contenido previo")
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.split_options.input_output.setText(str(taken))
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    assert attention.calls == 0, "El error ya interrumpe con un diálogo"
+
+
+def test_no_modal_dialog_is_opened_on_success(window, qt_app, source_pdf, dialogs):
+    """
+    A dialog per export is a dialog people learn to dismiss without reading, and
+    the project reserves those for what cannot be undone.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    assert dialogs.errors == []
+    assert dialogs.questions == []
+
+
+# =========================
+# Nombre sugerido
+# =========================
+
+def test_the_suggested_name_follows_the_range_as_it_is_corrected(window, qt_app, source_pdf):
+    """
+    Typing "1-3" and correcting it to "1-4" has to rename the output; leaving the
+    first suggestion there produced a file named after pages it did not contain.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-3")
+    assert window.ui.split_options.input_output.text() == "libro_1-3.pdf"
+
+    window.ui.split_options.input_selection.setText("1-4")
+    assert window.ui.split_options.input_output.text() == "libro_1-4.pdf"
+
+
+def test_a_name_typed_by_hand_still_survives_a_range_change(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.split_options.input_output.setText("capitulo uno.pdf")
+
+    window.ui.split_options.input_selection.setText("5-9")
+
+    assert window.ui.split_options.input_output.text() == "capitulo uno.pdf"
+
+
+# =========================
+# Extracción: la pantalla
+# =========================
+
+def test_the_extract_nav_shows_the_extraction_page(window):
+    window.ui.btn_extract.click()
+
+    assert window.ui.pages.currentIndex() == EXTRACT_PAGE
+
+
+def test_a_document_loaded_on_one_page_is_available_on_the_other(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    assert window.ui.extract_drop_area.label_file.text() == "libro.pdf"
+    assert "12 páginas" in window.ui.extract_drop_area.label_details.text()
+
+
+def test_a_document_dropped_on_the_extract_page_reaches_the_split_page(window, qt_app, source_pdf):
+    window.ui.extract_drop_area.file_dropped.emit(source_pdf)
+    settle(qt_app)
+
+    assert window.ui.drop_area.label_file.text() == "libro.pdf"
+    assert window.ui.split_options.input_selection.isEnabled() is True
+
+
+def test_the_extract_button_stays_disabled_until_file_and_range_are_ready(window, qt_app, source_pdf):
+    assert window.ui.btn_extract_process.isEnabled() is False
+
+    load(window, qt_app, source_pdf)
+    assert window.ui.btn_extract_process.isEnabled() is False, "Falta el rango"
+
+    window.ui.extract_options.input_selection.setText("1-3")
+    assert window.ui.btn_extract_process.isEnabled() is True
+
+
+def test_an_invalid_range_keeps_the_extract_button_disabled(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.extract_options.input_selection.setText("10-2")
+
+    assert window.ui.btn_extract_process.isEnabled() is False
+
+
+def test_the_resolution_only_shows_in_the_mode_that_uses_it(window):
+    options = window.ui.extract_options
+    window.ui.btn_extract.click()
+
+    options.set_mode(ExtractionMode.EMBEDDED_IMAGES)
+    assert options.row_dpi.isVisibleTo(options) is False, "Una imagen guardada sale como está"
+
+    options.set_mode(ExtractionMode.PAGE_RASTER)
+    assert options.row_dpi.isVisibleTo(options) is True
+
+
+def test_the_suggested_folder_appears_as_soon_as_the_pdf_is_open(window, qt_app, source_pdf):
+    """No range needed: the folder does not depend on the selection any more."""
+    load(window, qt_app, source_pdf)
+
+    assert window.ui.extract_options.output_name == "libro_figuras"
+
+
+def test_the_suggested_folder_does_not_change_with_the_range(window, qt_app, source_pdf):
+    """
+    So extracting 1-5 and then 6-10 lands in one folder. It used to carry the
+    selection, which produced a folder per run.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.extract_options.input_selection.setText("1-5")
+    first = window.ui.extract_options.output_name
+    window.ui.extract_options.input_selection.setText("6-10")
+
+    assert window.ui.extract_options.output_name == first == "libro_figuras"
+
+
+def test_the_suggested_folder_follows_the_mode(window, qt_app, source_pdf):
+    """The mode is part of the folder's name, so switching has to re-suggest it."""
+    load(window, qt_app, source_pdf)
+
+    window.ui.extract_options.set_mode(ExtractionMode.PAGE_RASTER)
+    assert window.ui.extract_options.output_name == "libro_paginas"
+
+    window.ui.extract_options.set_mode(ExtractionMode.EMBEDDED_IMAGES)
+    assert window.ui.extract_options.output_name == "libro_imagenes"
+
+
+def test_a_folder_typed_by_hand_is_not_overwritten_by_the_suggestion(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-3")
+    window.ui.extract_options.input_output.setText("mis figuras")
+
+    window.ui.extract_options.set_mode(ExtractionMode.PAGE_RASTER)
+    window.ui.extract_options.input_selection.setText("5-9")
+
+    assert window.ui.extract_options.output_name == "mis figuras"
+
+
+# =========================
+# Extracción: el resultado
+# =========================
+
+def test_extracting_images_writes_them_and_reports_success(window, qt_app, image_pdf):
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    folder = image_pdf.parent / "conimagenes_figuras"
+
+    assert folder.is_dir()
+    assert list(folder.iterdir()), "La carpeta no puede quedar vacía"
+    assert "Listo" in window.ui.label_status.text()
+
+
+def test_the_extraction_card_reports_the_folder_and_the_count(window, qt_app, image_pdf):
+    window.ui.btn_extract.click()
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    card = window.ui.extract_result
+
+    assert card.isVisible() is True
+    assert "conimagenes_figuras" in card.label_title.text()
+    assert "2 imágenes" in card.label_detail.toolTip()
+
+
+def test_the_extraction_card_offers_only_the_folder(window, qt_app, image_pdf):
+    """Its product is a folder, so "open" and "open folder" would be one button twice."""
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    card = window.ui.extract_result
+
+    assert card.btn_open.isVisibleTo(card) is False
+    assert card.btn_reveal.isVisibleTo(card) is True
+
+
+def test_the_extraction_folder_button_opens_the_folder(launcher_window, qt_app, image_pdf, spawns):
+    load(launcher_window, qt_app, image_pdf)
+    launcher_window.ui.extract_options.input_selection.setText("1-4")
+    launcher_window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    launcher_window.ui.extract_result.btn_reveal.click()
+
+    folder = image_pdf.parent / "conimagenes_figuras"
+    assert spawns.commands == [["xdg-open", str(folder)]]
+
+
+def test_rendering_pages_writes_one_png_each(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.set_mode(ExtractionMode.PAGE_RASTER)
+    window.ui.extract_options.input_selection.setText("2-4")
+    window.ui.extract_options.spin_dpi.setValue(72)
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    folder = source_pdf.parent / "libro_paginas"
+
+    assert sorted(p.name for p in folder.iterdir()) == [
+        "libro_p002.png",
+        "libro_p003.png",
+        "libro_p004.png",
+    ]
+
+
+def test_finding_nothing_is_reported_without_a_dialog(window, qt_app, source_pdf, dialogs):
+    """
+    Nothing failed and there is nothing to fix, so it is not an error: the card
+    says so and names the mode that would work.
+    """
+    window.ui.btn_extract.click()
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-12")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    card = window.ui.extract_result
+
+    assert dialogs.errors == []
+    assert card.isVisible() is True
+    assert "nada para extraer" in card.label_title.text()
+    assert "PNG" in card.label_detail.text(), "Tiene que nombrar el modo que sí funciona"
+
+
+def test_finding_nothing_offers_no_buttons(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-12")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    card = window.ui.extract_result
+
+    assert card.btn_open.isVisibleTo(card) is False
+    assert card.btn_reveal.isVisibleTo(card) is False, "No quedó ninguna carpeta que abrir"
+
+
+def test_finding_nothing_leaves_no_folder_next_to_the_pdf(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-12")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert sorted(p.name for p in source_pdf.parent.iterdir()) == ["libro.pdf"]
+
+
+def test_finding_nothing_is_not_recorded_in_the_history(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-12")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert window.ui.list_history.count() == 0
+
+
+def test_a_finished_extraction_asks_for_the_window_s_attention(window, qt_app, image_pdf, attention):
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert attention.calls == 1
+
+
+def test_an_extraction_that_found_nothing_still_asks_for_attention(window, qt_app, source_pdf, attention):
+    """
+    The operation finished, which is what the notice is about. Someone who walked
+    away wants to know it is done, whatever the outcome was.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.extract_options.input_selection.setText("1-12")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert attention.calls == 1
+
+
+def test_a_chosen_folder_collects_two_extractions(window, qt_app, image_pdf, tmp_path):
+    """
+    What the folder-per-run design got wrong, from the screen: pick a folder,
+    extract twice, find everything in it.
+    """
+    target = tmp_path / "mis figuras"
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+
+    window.ui.extract_options.input_selection.setText("2")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    window.ui.extract_options.input_selection.setText("3")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    names = sorted(p.name for p in target.iterdir())
+    assert any("_p002_" in name for name in names)
+    assert any("_p003_" in name for name in names)
+
+
+def test_someone_else_s_files_in_the_chosen_folder_are_left_alone(window, qt_app, image_pdf, tmp_path):
+    target = tmp_path / "mis figuras"
+    target.mkdir()
+    (target / "ajeno.txt").write_bytes(b"no me toques")
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert (target / "ajeno.txt").read_bytes() == b"no me toques"
+    assert "Listo" in window.ui.label_status.text()
+
+
+def test_re_extracting_replaces_and_says_so(window, qt_app, image_pdf, tmp_path):
+    target = tmp_path / "salida"
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+    window.ui.extract_options.input_selection.setText("1-4")
+
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+    first = sorted(p.name for p in target.iterdir())
+
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert sorted(p.name for p in target.iterdir()) == first, "No debe duplicar"
+    assert "reemplazado" in window.ui.extract_result.label_detail.toolTip()
+
+
+def test_the_ui_is_not_blocked_while_extracting(window, qt_app, image_pdf):
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+
+    window.ui.btn_extract_process.click()
+    ocupada = window.ui.progress.isVisible()
+    bloqueada = not window.ui.extract_options.input_selection.isEnabled()
+    settle(qt_app)
+
+    assert ocupada is True
+    assert bloqueada is True
+    assert window.ui.progress.isVisible() is False
+    assert window.ui.extract_options.input_selection.isEnabled() is True
+
+
+# =========================
+# Extracción: el historial
+# =========================
+
+def test_an_extraction_appears_in_the_history_with_its_count(window, qt_app, image_pdf):
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    row = window.ui.list_history.item(0).text()
+
+    assert "conimagenes_figuras" in row
+    assert "2 imágenes" in row, "El nombre es una carpeta; la cuenta es lo único que dice cuánto hay"
+
+
+def test_opening_an_extraction_from_the_history_shows_its_folder(launcher_window, qt_app, image_pdf, spawns):
+    """
+    Handing a directory to the PDF viewer is how you get an error instead of the
+    images, so the gesture differs by kind.
+    """
+    load(launcher_window, qt_app, image_pdf)
+    launcher_window.ui.extract_options.input_selection.setText("1-4")
+    launcher_window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    launcher_window.ui.btn_history.click()
+    settle(qt_app)
+    launcher_window.ui.list_history.setCurrentRow(0)
+    launcher_window.ui.btn_open_export.click()
+
+    folder = image_pdf.parent / "conimagenes_figuras"
+    assert spawns.commands == [["xdg-open", str(folder)]]
+
+
+def test_opening_a_split_from_the_history_still_launches_the_viewer(launcher_window, qt_app, source_pdf, spawns):
+    load(launcher_window, qt_app, source_pdf)
+    launcher_window.ui.split_options.input_selection.setText("2-4")
+    launcher_window.ui.btn_process.click()
+    settle(qt_app)
+
+    launcher_window.ui.btn_history.click()
+    settle(qt_app)
+    launcher_window.ui.list_history.setCurrentRow(0)
+    launcher_window.ui.btn_open_export.click()
+
+    assert spawns.commands == [["xdg-open", str(source_pdf.parent / "libro_2-4.pdf")]]
+
+
+def test_a_deleted_extraction_folder_is_flagged_in_the_list(window, qt_app, image_pdf):
+    import shutil
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    shutil.rmtree(image_pdf.parent / "conimagenes_figuras")
+    window.ui.btn_history.click()
+    settle(qt_app)
+
+    assert window.ui.list_history.item(0).text().startswith("✗")
+
+
+def test_splits_and_extractions_share_one_history(window, qt_app, image_pdf):
+    load(window, qt_app, image_pdf)
+
+    window.ui.split_options.input_selection.setText("1-2")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    window.ui.extract_options.input_selection.setText("1-4")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert window.ui.list_history.count() == 2

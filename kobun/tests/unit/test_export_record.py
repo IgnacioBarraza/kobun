@@ -7,6 +7,7 @@ from kobun.domain.history.entities.export_record import ExportRecord
 from kobun.domain.history.exceptions.invalid_export_record_exception import (
     InvalidExportRecordException,
 )
+from kobun.domain.history.value_objects.export_kind import ExportKind
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 
 WHEN = datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc)
@@ -72,3 +73,50 @@ def test_record_requires_timezone_aware_date():
 def test_record_accepts_zero_size():
     """A PDF of blank pages can be tiny, but never negative."""
     assert build(size_bytes=0).size_bytes == 0
+# =========================
+# Tipo y cantidad
+# =========================
+
+def test_a_record_is_a_split_of_one_file_by_default():
+    """Which is what every entry written before extractions existed was."""
+    entry = build()
+
+    assert entry.kind is ExportKind.SPLIT
+    assert entry.item_count == 1
+    assert entry.outputs_directory is False
+
+
+def test_an_extraction_remembers_its_kind_and_how_many_files_it_wrote():
+    entry = build(
+        output_path=Path("/libros/book_imagenes_1-5"),
+        kind=ExportKind.IMAGES,
+        item_count=12,
+    )
+
+    assert entry.kind is ExportKind.IMAGES
+    assert entry.item_count == 12
+    assert entry.outputs_directory is True
+
+
+def test_the_kind_survives_arriving_as_text():
+    """This is how it comes back from the JSON history."""
+    assert build(kind="pages").kind is ExportKind.PAGES
+
+
+def test_an_unknown_kind_is_rejected():
+    with pytest.raises(ValueError):
+        build(kind="tablas")
+
+
+def test_an_export_that_produced_nothing_is_not_a_build():
+    """
+    An extraction that found no images is a real outcome, but not an export:
+    there is no file to come back to.
+    """
+    with pytest.raises(InvalidExportRecordException, match="al menos un archivo"):
+        build(item_count=0)
+
+
+def test_a_negative_item_count_is_rejected():
+    with pytest.raises(InvalidExportRecordException):
+        build(item_count=-3)
