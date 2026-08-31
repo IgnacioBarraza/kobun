@@ -49,6 +49,7 @@ POLICY_LABELS = {
 }
 
 NO_FOLDER = "Elegí un PDF para definir dónde guardar."
+SAVES_INTO = "Se guardan en:"
 
 
 class ExtractOptionsWidget(QWidget):
@@ -59,8 +60,15 @@ class ExtractOptionsWidget(QWidget):
     parses nothing. The text goes as it is to PageSelection.parse and the
     resolution to the domain, which are the ones that know what is valid.
 
-    The destination is a **folder** and not a file, which is the one real
-    difference from the split screen: a single page can produce several images.
+    The destination is a **folder**, and unlike the split screen it is held as a
+    **full path** rather than as a parent plus a name.
+
+    That is not a stylistic difference. The split screen's field is a filename
+    and its folder is context, so parent-plus-name fits. Here the field *is* the
+    folder, and splitting it meant loading another PDF replaced the parent while
+    the name stayed put: the field went on showing "mis imagenes" while the files
+    landed in `<new pdf folder>/mis imagenes`. A chosen folder has to stay the
+    folder that was chosen.
     """
 
     selection_changed = Signal(str)
@@ -69,15 +77,14 @@ class ExtractOptionsWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Same split as in SplitOptionsWidget: the field holds the folder's
-        # name and the containing directory is reported below, because a full
-        # path in the field is unreadable and is not what needs editing.
-        self._parent_directory: Optional[Path] = None
+        # Where a folder *name* typed on its own is resolved: the source PDF's
+        # directory. It is only a fallback for relative input; an absolute path in
+        # the field is used as it stands and survives loading another document.
+        self._default_parent: Optional[Path] = None
 
-        # See SplitOptionsWidget: distinguishing a suggestion from a typed name
-        # is what lets the folder follow the range *and* the mode, which is part
-        # of its name.
-        self._suggested_name: Optional[str] = None
+        # The last path Kobun suggested. Without it there is no way to tell a
+        # suggestion from a choice, and the field could only ever be filled once.
+        self._suggested_path: Optional[str] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -126,6 +133,8 @@ class ExtractOptionsWidget(QWidget):
 
         self.input_output = QLineEdit()
         self.input_output.setPlaceholderText("Se sugiere al abrir el PDF")
+        # So the resolved destination underneath follows what is being typed.
+        self.input_output.textChanged.connect(lambda _text: self._render_folder())
         destination_row.addWidget(self.input_output)
 
         self.btn_browse_output = QPushButton("Examinar")
@@ -176,16 +185,28 @@ class ExtractOptionsWidget(QWidget):
     @property
     def destination(self) -> Optional[Path]:
         """
-        The full folder path: the remembered parent plus the typed name.
+        The folder to write into, as typed.
 
-        Returns None when there is no name, so the use case falls back to its
-        suggested folder.
+        An absolute path is used exactly as it stands, which is what makes a
+        chosen folder stick: nothing later can move it. A bare name —"mis
+        figuras"— is resolved against the source PDF's directory, so the
+        suggested value stays short and readable in the field.
+
+        Returns None when the field is empty, so the use case falls back to its
+        own suggestion.
         """
-        name = self.output_name
-        if not name or self._parent_directory is None:
+        text = self.output_name
+        if not text:
             return None
 
-        return self._parent_directory / name
+        path = Path(text).expanduser()
+        if path.is_absolute():
+            return path
+
+        if self._default_parent is None:
+            return None
+
+        return self._default_parent / path
 
     @property
     def policy(self) -> OverwritePolicy:
@@ -207,41 +228,57 @@ class ExtractOptionsWidget(QWidget):
     # Writing
     # =========================
 
-    def set_parent_directory(self, directory: Optional[Path]) -> None:
+    def set_default_parent(self, directory: Optional[Path]) -> None:
         """
-        Where the output folder gets created. Set when a document loads, and
-        the folder dialog can change it.
+        Where a folder name typed on its own is resolved. Set when a document
+        loads.
+
+        It deliberately does **not** touch what is in the field: an absolute path
+        the user chose is theirs, and a document load is not a reason to move it.
         """
-        self._parent_directory = Path(directory) if directory is not None else None
+        self._default_parent = Path(directory) if directory is not None else None
         self._render_folder()
 
     def set_destination(self, path: Path) -> None:
         """
-        Sets parent and folder name from a full path.
+        Points the output at a folder, as an absolute path so it survives
+        everything that happens afterwards.
         """
-        path = Path(path)
-        self.set_parent_directory(path.parent)
-        self.input_output.setText(path.name)
+        self.input_output.setText(str(Path(path)))
+        self._render_folder()
 
     def set_suggested_destination(self, path: Optional[Path]) -> None:
         """
-        Prefills the suggestion, replacing an earlier suggestion but never
-        something the user typed.
+        Prefills the suggestion, replacing an earlier suggestion but never a
+        folder the user chose or typed.
+
+        The suggestion goes in as a bare name when it sits in the source's own
+        directory —"libro_figuras" reads better than the whole path— and the
+        resolved location is reported underneath either way.
         """
         if path is None:
             return
 
         current = self.output_name
-        if current and current != self._suggested_name:
+        if current and current != self._suggested_path:
             return
 
-        self.set_destination(path)
-        self._suggested_name = path.name
+        path = Path(path)
+        shown = (
+            path.name
+            if self._default_parent is not None and path.parent == self._default_parent
+            else str(path)
+        )
+
+        self.input_output.setText(shown)
+        self._suggested_path = shown
+        self._render_folder()
 
     def clear(self) -> None:
         self.input_selection.clear()
         self.input_output.clear()
-        self._suggested_name = None
+        self._suggested_path = None
+        self._render_folder()
 
     def set_enabled(self, enabled: bool) -> None:
         self.combo_mode.setEnabled(enabled)
@@ -276,22 +313,41 @@ class ExtractOptionsWidget(QWidget):
         self._render_folder()
 
     def _render_folder(self) -> None:
-        if self._parent_directory is None:
+        """
+        Reports the folder that will actually be written to.
+
+        It shows the *resolved* destination and not the parent directory: when
+        the field holds a bare name, the only way to know where that lands is to
+        see it spelled out.
+        """
+        destination = self.destination
+
+        if destination is None:
             self.label_folder.setText(NO_FOLDER)
             self.label_folder.setToolTip("")
+            self.label_folder.setVisible(True)
             return
 
-        full = str(self._parent_directory)
+        full = str(destination)
+
+        # Nothing to add when the field already spells the whole path out, which
+        # is the case right after picking a folder. Repeating it is noise.
+        if self.output_name == full:
+            self.label_folder.setVisible(False)
+            self.label_folder.setToolTip(full)
+            return
+
+        self.label_folder.setVisible(True)
         metrics = QFontMetrics(self.label_folder.font())
-        available = max(self.width() - 90, 120)
+        available = max(self.width() - 110, 120)
 
         self.label_folder.setText(
-            f"Dentro de: {metrics.elidedText(full, Qt.TextElideMode.ElideMiddle, available)}"
+            f"{SAVES_INTO} {metrics.elidedText(full, Qt.TextElideMode.ElideMiddle, available)}"
         )
         self.label_folder.setToolTip(full)
 
     def _browse_output(self) -> None:
-        current = self.destination or self._parent_directory or Path.home()
+        current = self.destination or self._default_parent or Path.home()
         directory = QFileDialog.getExistingDirectory(
             self, "Elegir carpeta de salida", str(current)
         )

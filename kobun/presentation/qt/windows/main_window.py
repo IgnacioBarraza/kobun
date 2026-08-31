@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
         self.ui.extract_drop_area.show_document(document.filename, details)
 
         self.ui.split_options.set_directory(document.storage_path.parent)
-        self.ui.extract_options.set_parent_directory(document.storage_path.parent)
+        self.ui.extract_options.set_default_parent(document.storage_path.parent)
         self._suggest_extract_destination()
 
         self._set_status(f"{document.filename} listo.")

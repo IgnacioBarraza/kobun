@@ -1417,3 +1417,209 @@ def test_splits_and_extractions_share_one_history(window, qt_app, image_pdf):
     settle(qt_app)
 
     assert window.ui.list_history.count() == 2
+# =========================
+# La carpeta elegida no se mueve
+# =========================
+
+def test_a_chosen_folder_survives_loading_another_pdf(window, qt_app, image_pdf, tmp_path):
+    """
+    Regression. The widget used to hold the destination as a parent plus a name,
+    so loading another document replaced the parent while the name stayed on
+    screen: the field went on saying "mis imagenes" while the files landed in
+    `<new pdf folder>/mis imagenes`.
+    """
+    target = tmp_path / "mis imagenes"
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(otro)
+    doc.close()
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+
+    load(window, qt_app, otro)
+
+    assert window.ui.extract_options.destination == target
+
+
+def test_both_documents_extract_into_the_chosen_folder(window, qt_app, image_pdf, tmp_path):
+    # In a directory of its own: the fixtures share tmp_path, so a folder named
+    # directly under it would be the source's neighbour and prove nothing.
+    target = tmp_path / "salida" / "mis imagenes"
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.draw_rect(pymupdf.Rect(80, 200, 300, 350), fill=(0.2, 0.4, 0.8), color=(0, 0, 0))
+    doc.save(otro)
+    doc.close()
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+    window.ui.extract_options.input_selection.setText("2")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    load(window, qt_app, otro)
+    window.ui.extract_options.input_selection.setText("1")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    names = sorted(p.name for p in target.iterdir())
+    assert any(name.startswith("conimagenes_") for name in names)
+    assert any(name.startswith("otro_") for name in names)
+    assert not (image_pdf.parent / "mis imagenes").exists(), "No debe crear una carpeta paralela"
+
+
+def test_a_chosen_folder_survives_a_mode_change(window, qt_app, image_pdf, tmp_path):
+    target = tmp_path / "mis imagenes"
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+    window.ui.extract_options.set_mode(ExtractionMode.PAGE_RASTER)
+
+    assert window.ui.extract_options.destination == target
+
+
+def test_a_chosen_folder_survives_extracting(window, qt_app, image_pdf, tmp_path):
+    target = tmp_path / "mis imagenes"
+
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.set_destination(target)
+    window.ui.extract_options.input_selection.setText("2")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert window.ui.extract_options.destination == target
+
+
+def test_an_absolute_path_typed_by_hand_is_used_as_it_stands(window, qt_app, image_pdf, tmp_path):
+    load(window, qt_app, image_pdf)
+
+    window.ui.extract_options.input_output.setText(str(tmp_path / "a mano"))
+
+    assert window.ui.extract_options.destination == tmp_path / "a mano"
+
+
+def test_a_bare_name_lands_next_to_the_pdf(window, qt_app, image_pdf):
+    """
+    Which is why the suggestion can stay short: "conimagenes_figuras" reads
+    better in the field than the whole path.
+    """
+    load(window, qt_app, image_pdf)
+
+    window.ui.extract_options.input_output.setText("figuras sueltas")
+
+    assert window.ui.extract_options.destination == image_pdf.parent / "figuras sueltas"
+
+
+def test_the_screen_reports_where_the_files_will_go(window, qt_app, image_pdf):
+    """
+    With a bare name in the field, the only way to know where it lands is to see
+    it spelled out.
+    """
+    load(window, qt_app, image_pdf)
+
+    assert window.ui.extract_options.label_folder.toolTip() == str(
+        image_pdf.parent / "conimagenes_figuras"
+    )
+    assert "Se guardan en:" in window.ui.extract_options.label_folder.text()
+
+
+def test_an_empty_destination_falls_back_to_the_suggestion(window, qt_app, image_pdf):
+    load(window, qt_app, image_pdf)
+    window.ui.extract_options.input_output.clear()
+
+    assert window.ui.extract_options.destination is None, "El use case usa su sugerencia"
+
+    window.ui.extract_options.input_selection.setText("2")
+    window.ui.btn_extract_process.click()
+    settle(qt_app)
+
+    assert (image_pdf.parent / "conimagenes_figuras").is_dir()
+
+
+def test_the_resolved_location_is_not_repeated_under_a_full_path(window, qt_app, image_pdf, tmp_path):
+    """
+    Right after picking a folder the field already spells the whole path out, so
+    saying it again underneath is noise.
+    """
+    load(window, qt_app, image_pdf)
+    options = window.ui.extract_options
+
+    window.ui.btn_extract.click()
+    options.set_destination(tmp_path / "salida" / "mis figuras")
+
+    assert options.label_folder.isVisibleTo(options) is False
+
+    options.input_output.setText("un nombre suelto")
+    assert options.label_folder.isVisibleTo(options) is True
+
+# =========================
+# Lo mismo en Dividir
+# =========================
+
+def test_a_chosen_split_folder_survives_loading_another_pdf(window, qt_app, source_pdf, tmp_path):
+    """
+    Regression, same class as the extraction one: choosing recortes/ and then
+    opening another PDF wrote next to that PDF instead, with the chosen filename
+    still on screen.
+    """
+    chosen = tmp_path / "recortes"
+    chosen.mkdir()
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    for _ in range(4):
+        doc.new_page()
+    doc.save(otro)
+    doc.close()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.set_destination(chosen / "capitulo uno.pdf")
+
+    load(window, qt_app, otro)
+    window.ui.split_options.input_selection.setText("2-3")
+
+    assert window.ui.split_options.destination.parent == chosen
+
+
+def test_the_next_suggestion_stays_in_the_chosen_folder(window, qt_app, source_pdf, tmp_path):
+    """
+    Re-suggesting a filename is no reason to move the folder the user picked.
+    """
+    chosen = tmp_path / "recortes"
+    chosen.mkdir()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.split_options.set_destination(chosen / "capitulo uno.pdf")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("5-7")
+
+    assert window.ui.split_options.destination == chosen / "libro_5-7.pdf"
+
+
+def test_two_splits_land_in_the_same_chosen_folder(window, qt_app, source_pdf, tmp_path):
+    chosen = tmp_path / "recortes"
+    chosen.mkdir()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    window.ui.split_options.set_destination(chosen / "primero.pdf")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("5-7")
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    assert sorted(p.name for p in chosen.iterdir()) == ["libro_5-7.pdf", "primero.pdf"]
+
+
+def test_a_document_folder_is_still_the_default_when_nothing_was_chosen(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+
+    assert window.ui.split_options.destination == source_pdf.parent / "libro_1-3.pdf"

@@ -46,6 +46,13 @@ class SplitOptionsWidget(QWidget):
         # and it is not what the user needs to edit.
         self._directory: Optional[Path] = None
 
+        # Whether that folder was picked deliberately —through the dialog— or is
+        # just the source document's. Loading another PDF may replace the second
+        # but never the first: choosing a destination and then opening a file
+        # used to move the output back next to it, silently, with the filename
+        # still on screen.
+        self._directory_chosen = False
+
         # The last name Kobun suggested. Without it there is no way to tell a
         # suggestion apart from something the user typed, and the field could
         # only ever be filled once: changing the range afterwards left the file
@@ -146,30 +153,41 @@ class SplitOptionsWidget(QWidget):
     # Writing
     # =========================
 
-    def set_directory(self, directory: Optional[Path]) -> None:
+    def set_directory(self, directory: Optional[Path], chosen: bool = False) -> None:
         """
-        The folder to write into. Set when a document loads, and the save
-        dialog can change it.
+        The folder to write into.
+
+        :param chosen: True when the user picked it. A folder picked that way
+            outlives loading another document, which only ever offers a default.
         """
+        if self._directory_chosen and not chosen:
+            return
+
         self._directory = Path(directory) if directory is not None else None
+        self._directory_chosen = chosen
         self._render_folder()
 
     def set_destination(self, path: Path) -> None:
         """
-        Sets folder and name from a full path.
+        Sets folder and name from a full path, as a deliberate choice.
         """
         path = Path(path)
-        self.set_directory(path.parent)
+        self.set_directory(path.parent, chosen=True)
         self.input_output.setText(path.name)
 
     def set_suggested_destination(self, path: Optional[Path]) -> None:
         """
-        Prefills the suggested destination, replacing an earlier suggestion but
+        Prefills the suggested **name**, replacing an earlier suggestion but
         never something the user typed.
 
-        The distinction is what makes the field track the range: typing "1-3"
-        and then correcting it to "1-4" has to rename the output, while a name
-        chosen by hand must survive every later keystroke in the range field.
+        Only the name: the folder is either the document's or the one the user
+        chose, and re-suggesting a filename is no reason to move it. That is what
+        kept a chosen destination from surviving the next keystroke in the range
+        field.
+
+        The distinction between a suggestion and a typed name is what makes the
+        field track the range: typing "1-3" and then correcting it to "1-4" has
+        to rename the output.
         """
         if path is None:
             return
@@ -178,7 +196,7 @@ class SplitOptionsWidget(QWidget):
         if current and current != self._suggested_name:
             return
 
-        self.set_destination(path)
+        self.input_output.setText(path.name)
         self._suggested_name = path.name
 
     def clear(self) -> None:

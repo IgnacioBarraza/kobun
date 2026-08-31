@@ -12,8 +12,8 @@ cases PDF viewers handle badly: three chapters out of a 600 page book in one
 pass, or every figure in a chapter without screenshotting them one by one.
 
 Written in Python with **PySide6 (Qt)** and **PyMuPDF**, on a layered
-architecture where the domain knows neither of them: **7,200 lines of code held
-up by 7,400 of tests, 546 of which run with no dependencies installed at all.**
+architecture where the domain knows neither of them: **7,300 lines of code held
+up by 7,800 of tests, 546 of which run with no dependencies installed at all.**
 
 |                                                           |                                                             |
 | --------------------------------------------------------- | ----------------------------------------------------------- |
@@ -93,11 +93,12 @@ kobun
   of it
 - Invisible 1x1 spacers and hairline rules are filtered out, so the folder holds
   figures and not slivers
-- **One folder you choose, everything in it.** The destination does not depend on
-  the page selection, so extracting 1-5 and then 6-10 collects both in the same
-  place instead of making a folder per run. Files already in that folder are left
-  alone, and re-extracting the same pages replaces its own output rather than
-  piling up copies
+- **One folder you choose, everything in it.** The destination is a full path you
+  can point anywhere, and it stays put: it does not depend on the page selection,
+  it survives changing mode, extracting, and opening another PDF. Extracting 1-5
+  and then 6-10 collects both in the same place instead of making a folder per
+  run. Files already in that folder are left alone, and re-extracting the same
+  pages replaces its own output rather than piling up copies
 - Files are named `book_p007_img02.png` for a stored image and
   `book_p007_fig01.png` for a rendered figure, zero-padded so the folder's
   alphabetical order matches the document's, and telling the originals apart from
@@ -113,6 +114,9 @@ kobun
 - The destination field asks for a filename; the folder is shown separately
 - Output never overwrites silently — `OverwritePolicy` (`FAIL` / `OVERWRITE` /
   `RENAME`) — and never writes over the source file
+- A destination picked through the dialog is remembered: opening another PDF
+  offers a new default name inside it, rather than moving the output back next to
+  the source
 
 ### Reading the input safely
 

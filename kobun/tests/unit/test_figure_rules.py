@@ -5,8 +5,6 @@ This is where the "extract the images even when there are none stored" feature
 is either useful or noise, so it is tested against the shapes a real page holds:
 a border, a rule, a body paragraph, a chart with axis labels, a framed photo.
 """
-import pytest
-
 from kobun.domain.pdf.services import figure_rules
 from kobun.domain.pdf.services.figure_rules import (
     FIGURE_PADDING,

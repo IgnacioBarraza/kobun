@@ -16,7 +16,6 @@ from kobun.domain.pdf.exceptions.invalid_output_path_exception import (
 from kobun.domain.pdf.services.asset_extractor_service import AssetExtractorService
 from kobun.domain.pdf.value_objects.extraction_mode import ExtractionMode
 from kobun.domain.pdf.value_objects.overwrite_policy import OverwritePolicy
-from kobun.domain.pdf.value_objects.page_selection import PageSelection
 
 
 class ExtractAssetsUseCase:
