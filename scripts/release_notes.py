@@ -78,7 +78,7 @@ PRERELEASE_WARNING = (
     "> **Test build.** Published automatically from `develop` so changes can be tried "
     "before they become a definitive version. It may have rough edges; for the latest "
     "stable version go to "
-    "[releases](https://github.com/IgnacioBarraza/kobun_pdf_splitter/releases/latest)."
+    "[releases](https://github.com/IgnacioBarraza/kobun/releases/latest)."
 )
 
 INSTALL = """## Install

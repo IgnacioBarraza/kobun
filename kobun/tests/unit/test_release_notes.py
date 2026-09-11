@@ -149,7 +149,7 @@ def test_includes_the_install_instructions():
 
 def test_comparison_link_between_tags():
     body = notes.build_notes(
-        [commit("feat: algo")], tag="v0.2.0", previous="v0.1.0", slug="IgnacioBarraza/kobun_pdf_splitter"
+        [commit("feat: algo")], tag="v0.2.0", previous="v0.1.0", slug="IgnacioBarraza/kobun"
     )
 
     assert "compare/v0.1.0...v0.2.0" in body
@@ -157,7 +157,7 @@ def test_comparison_link_between_tags():
 
 def test_first_release_links_to_the_commit_list():
     body = notes.build_notes(
-        [commit("feat: algo")], tag="v0.1.0", previous=None, slug="IgnacioBarraza/kobun_pdf_splitter"
+        [commit("feat: algo")], tag="v0.1.0", previous=None, slug="IgnacioBarraza/kobun"
     )
 
     assert "commits/v0.1.0" in body

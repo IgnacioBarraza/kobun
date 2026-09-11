@@ -332,6 +332,62 @@ class StyleGenerator:
             border-radius: 3px;
         }}
 
+        /* Result card: the accent bar on the left is what makes it read as an
+           outcome rather than another panel of options. A full coloured surface
+           was too loud for something that appears after every export. */
+        QFrame#ResultCard {{
+            background-color: {surface};
+            border: none;
+            border-left: 3px solid {success};
+            border-radius: {RADIUS_MEDIUM}px;
+        }}
+
+        QLabel#ResultTitle {{
+            font-size: 14px;
+            font-weight: bold;
+            color: {text_primary};
+        }}
+
+        /* The resolution field. Styled to match QLineEdit: under Fusion an
+           unstyled QSpinBox keeps its native arrows and is the one widget that
+           gives away that this is Qt. */
+        QSpinBox {{
+            background-color: {surface_alt};
+            border: 1px solid transparent;
+            border-radius: {RADIUS_MEDIUM}px;
+            padding: 9px 10px;
+            min-width: 96px;
+            color: {text_primary};
+            selection-background-color: {primary};
+            selection-color: {text_inverse};
+        }}
+
+        QSpinBox:hover {{
+            border-color: {border};
+        }}
+
+        QSpinBox:focus {{
+            border-color: {primary};
+            background-color: {surface};
+        }}
+
+        QSpinBox:disabled {{
+            color: {text_disabled};
+            background-color: {surface};
+        }}
+
+        /* The stepper buttons are hidden rather than styled. QSS cannot rotate
+           an image, and it does not draw CSS border-triangles either, so every
+           attempt at an up arrow came out as a stray square in the corner. The
+           field is typed into and responds to the wheel and the arrow keys, so
+           nothing is lost but the artefact. */
+        QSpinBox::up-button, QSpinBox::down-button {{
+            width: 0;
+            height: 0;
+            border: none;
+            background: transparent;
+        }}
+
         /* The history tooltips are long; with no style of their own they
            inherit the system's and turn illegible in a dark theme. */
         QToolTip {{

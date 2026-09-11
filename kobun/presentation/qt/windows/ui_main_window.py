@@ -14,10 +14,13 @@ from PySide6.QtWidgets import (
 
 import kobun
 from kobun.presentation.qt.windows.drag_drop_area import DragDropArea
+from kobun.presentation.qt.windows.export_result_card import ExportResultCard
+from kobun.presentation.qt.windows.extract_options_widget import ExtractOptionsWidget
 from kobun.presentation.qt.windows.split_options_widget import SplitOptionsWidget
 
 SPLIT_PAGE = 0
-HISTORY_PAGE = 1
+EXTRACT_PAGE = 1
+HISTORY_PAGE = 2
 
 
 class Ui_MainWindow:
@@ -66,7 +69,7 @@ class Ui_MainWindow:
         self.label_logo.setObjectName("Logo")
         header.addWidget(self.label_logo)
 
-        self.label_tagline = QLabel("Dividir PDFs")
+        self.label_tagline = QLabel("Dividir y extraer")
         self.label_tagline.setObjectName("SecondaryText")
         header.addWidget(self.label_tagline)
 
@@ -75,6 +78,9 @@ class Ui_MainWindow:
 
         self.btn_split = self._nav_button("Dividir PDF", checked=True)
         layout.addWidget(self.btn_split)
+
+        self.btn_extract = self._nav_button("Extraer imágenes")
+        layout.addWidget(self.btn_extract)
 
         self.btn_history = self._nav_button("Historial")
         layout.addWidget(self.btn_history)
@@ -134,8 +140,11 @@ class Ui_MainWindow:
         layout.setContentsMargins(38, 30, 38, 26)
         layout.setSpacing(18)
 
+        # Order matters: the indices are the SPLIT_PAGE / EXTRACT_PAGE /
+        # HISTORY_PAGE constants the window navigates by.
         self.pages = QStackedWidget()
         self.pages.addWidget(self._build_split_page())
+        self.pages.addWidget(self._build_extract_page())
         self.pages.addWidget(self._build_history_page())
         layout.addWidget(self.pages, stretch=1)
 
@@ -171,11 +180,54 @@ class Ui_MainWindow:
 
         layout.addStretch()
 
+        self.split_result = ExportResultCard()
+        layout.addWidget(self.split_result)
+
         self.btn_process = QPushButton("DIVIDIR PDF")
         self.btn_process.setObjectName("PrimaryButton")
         self.btn_process.setMinimumHeight(44)
         self.btn_process.setEnabled(False)
         layout.addWidget(self.btn_process)
+
+        return page
+
+    def _build_extract_page(self) -> QWidget:
+        """
+        The extraction screen, deliberately built like the split one: same drop
+        area, same shape of options, same result card in the same place. It is
+        the same task with a different product, and making it look like a
+        different application would be a cost with no benefit.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+
+        self.title_extract = QLabel("Extraer imágenes")
+        self.title_extract.setObjectName("Title")
+        layout.addWidget(self.title_extract)
+
+        # A second drop area rather than one shared above the pages: both emit
+        # into the same handler, so a document loaded on either screen shows up
+        # on both, and each page stays readable on its own.
+        self.extract_drop_area = DragDropArea()
+        layout.addWidget(self.extract_drop_area)
+
+        layout.addWidget(self._hairline())
+
+        self.extract_options = ExtractOptionsWidget()
+        layout.addWidget(self.extract_options)
+
+        layout.addStretch()
+
+        self.extract_result = ExportResultCard()
+        layout.addWidget(self.extract_result)
+
+        self.btn_extract_process = QPushButton("EXTRAER")
+        self.btn_extract_process.setObjectName("PrimaryButton")
+        self.btn_extract_process.setMinimumHeight(44)
+        self.btn_extract_process.setEnabled(False)
+        layout.addWidget(self.btn_extract_process)
 
         return page
 

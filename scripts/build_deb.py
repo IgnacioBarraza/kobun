@@ -61,7 +61,7 @@ Architecture: {architecture}
 Depends: {dependencies}
 Installed-Size: {size}
 Maintainer: {maintainer}
-Homepage: https://github.com/IgnacioBarraza/kobun_pdf_splitter
+Homepage: https://github.com/IgnacioBarraza/kobun
 Description: {description}
 """
 

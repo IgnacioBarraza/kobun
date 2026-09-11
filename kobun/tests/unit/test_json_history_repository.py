@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from kobun.domain.history.entities.export_record import ExportRecord
+from kobun.domain.history.value_objects.export_kind import ExportKind
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.infrastructure.repositories.json_history_repository import (
     SCHEMA_VERSION,
@@ -185,3 +186,105 @@ def test_unicode_survives_the_round_trip(repository):
     repository.add(record(title="Análisis jurídico — año 2026"))
 
     assert repository.list_recent()[0].title == "Análisis jurídico — año 2026"
+# =========================
+# Migración del esquema
+# =========================
+
+def write_version_1(path: Path, entry_overrides: dict = None) -> None:
+    """
+    A history exactly as version 1 wrote it: no `kind`, no `item_count`. Written
+    by hand and not through the repository, because the point is reading what an
+    older build left behind.
+    """
+    entry = {
+        "id": str(uuid4()),
+        "source_path": "/libros/book.pdf",
+        "selection": "1-5,10",
+        "output_path": "/libros/book_1-5_10.pdf",
+        "page_count": 6,
+        "size_bytes": 2048,
+        "created_at": WHEN.isoformat(),
+        "title": "Libro (1-5,10)",
+    }
+    entry.update(entry_overrides or {})
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"version": 1, "entries": [entry]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+def test_the_current_schema_is_version_2(repository):
+    repository.add(record())
+
+    payload = json.loads(repository.file_path.read_text(encoding="utf-8"))
+
+    assert payload["version"] == 2 == SCHEMA_VERSION
+
+
+def test_version_1_entries_are_read_as_single_file_splits(repository):
+    write_version_1(repository.file_path)
+
+    entries = repository.list_recent()
+
+    assert len(entries) == 1
+    assert entries[0].kind is ExportKind.SPLIT
+    assert entries[0].item_count == 1
+
+
+def test_version_1_entries_keep_every_field_they_had(repository):
+    write_version_1(repository.file_path)
+
+    entry = repository.list_recent()[0]
+
+    assert entry.output_path == Path("/libros/book_1-5_10.pdf")
+    assert str(entry.selection) == "1-5,10"
+    assert entry.page_count == 6
+    assert entry.title == "Libro (1-5,10)"
+
+
+def test_an_old_history_is_upgraded_in_place_on_the_next_write(repository):
+    write_version_1(repository.file_path)
+
+    repository.add(record("nuevo"))
+    payload = json.loads(repository.file_path.read_text(encoding="utf-8"))
+
+    assert payload["version"] == SCHEMA_VERSION
+    assert len(payload["entries"]) == 2
+    assert all("kind" in entry for entry in payload["entries"])
+
+
+def test_an_unreadable_kind_drops_only_its_own_entry(repository):
+    write_version_1(repository.file_path, {"kind": "tablas"})
+
+    assert repository.list_recent() == []
+
+
+# =========================
+# Extracciones
+# =========================
+
+def test_an_extraction_survives_the_round_trip(repository):
+    original = record(
+        output_path=Path("/libros/book_imagenes_1-5"),
+        kind=ExportKind.IMAGES,
+        item_count=12,
+    )
+
+    repository.add(original)
+    stored = repository.list_recent()[0]
+
+    assert stored.kind is ExportKind.IMAGES
+    assert stored.item_count == 12
+    assert stored.output_path == Path("/libros/book_imagenes_1-5")
+    assert stored.outputs_directory is True
+
+
+def test_both_kinds_coexist_in_one_history(repository):
+    repository.add(record("split"))
+    repository.add(record("imgs", output_path=Path("/x/imgs"), kind=ExportKind.PAGES, item_count=3))
+
+    kinds = [entry.kind for entry in repository.list_recent()]
+
+    assert kinds == [ExportKind.PAGES, ExportKind.SPLIT]

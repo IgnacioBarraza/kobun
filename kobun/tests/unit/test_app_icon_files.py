@@ -123,9 +123,9 @@ def test_the_windows_installer_version_matches_the_package():
         import pytest as _pytest
         _pytest.skip("no hay receta de instalador")
 
-    declarada = re.search(r'#define MiVersion "([^"]+)"', iss.read_text(encoding="utf-8"))
+    declarada = re.search(r'#define MyAppVersion "([^"]+)"', iss.read_text(encoding="utf-8"))
 
-    assert declarada is not None, "el .iss debe declarar MiVersion"
+    assert declarada is not None, "el .iss debe declarar MyAppVersion"
     assert declarada.group(1) == kobun.__version__
 
 

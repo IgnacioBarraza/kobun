@@ -1,13 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-Receta de PyInstaller para Kobun, compartida por Linux y Windows.
+PyInstaller recipe for Kobun, shared by Linux and Windows.
 
-Se construye con:
+Build it with:
 
     python scripts/build_app.py
 
-PyInstaller **no compila cruzado**: este archivo sirve en los dos sistemas,
-pero cada binario hay que generarlo en el sistema al que apunta.
+PyInstaller **does not cross-compile**: this file serves both systems, but each
+binary has to be produced on the system it targets.
 """
 import os
 import sys
@@ -15,22 +15,22 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_data_files
 
-RAIZ = Path(SPECPATH).parent  # noqa: F821 — SPECPATH lo inyecta PyInstaller
-ES_WINDOWS = sys.platform.startswith("win")
+ROOT = Path(SPECPATH).parent  # noqa: F821 — PyInstaller injects SPECPATH
+IS_WINDOWS = sys.platform.startswith("win")
 
-# El flag --onedir de la línea de comandos no llega a un archivo .spec: el modo
-# lo decide la receta según tenga o no un paso COLLECT. Se lee del entorno para
-# que scripts/build_app.py pueda elegirlo.
-UN_SOLO_ARCHIVO = os.environ.get("KOBUN_ONEFILE", "1") != "0"
+# The --onedir command line flag never reaches a .spec file: the recipe decides
+# the mode by having a COLLECT step or not. It is read from the environment so
+# scripts/build_app.py can choose.
+ONE_FILE = os.environ.get("KOBUN_ONEFILE", "1") != "0"
 
-# Los temas, los iconos y las flechas del selector no son .py, así que sin
-# recolectarlos el ejecutable arranca sin colores. Y como ThemeService deja
-# pasar la excepción cuando falla el tema por defecto, en realidad no arranca.
-DATOS = collect_data_files("kobun.shared")
+# Themes, icons and the combo box arrows are not .py, so without collecting
+# them the executable starts with no colours. And since ThemeService lets the
+# exception through when the default theme fails, it does not start at all.
+DATA = collect_data_files("kobun.shared")
 
-# Qt trae mucho más de lo que usamos. Cada exclusión se verifica corriendo el
-# binario: recortar de más rompe en tiempo de ejecución, no al construir.
-QT_SIN_USO = [
+# Qt ships far more than we use. Every exclusion is verified by running the
+# binary: trimming too much breaks at runtime, not at build time.
+UNUSED_QT = [
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DCore",
     "PySide6.Qt3DExtras",
@@ -66,7 +66,7 @@ QT_SIN_USO = [
     "PySide6.QtWebSockets",
 ]
 
-EXCLUIDOS = QT_SIN_USO + [
+EXCLUDED = UNUSED_QT + [
     "tkinter",
     "pytest",
     "setuptools",
@@ -74,40 +74,40 @@ EXCLUIDOS = QT_SIN_USO + [
 ]
 
 analysis = Analysis(  # noqa: F821
-    [str(RAIZ / "main.py")],
-    # Hace falta apuntar al árbol de fuentes: con el proyecto instalado en modo
-    # editable, PyInstaller ve el paquete importable pero no encuentra los
-    # archivos para empaquetar, y falla con "No module named kobun.…".
-    pathex=[str(RAIZ)],
+    [str(ROOT / "main.py")],
+    # Pointing at the source tree is required: with the project installed in
+    # editable mode PyInstaller sees the package as importable but cannot find
+    # the files to bundle, and fails with "No module named kobun.…".
+    pathex=[str(ROOT)],
     binaries=[],
-    datas=DATOS,
+    datas=DATA,
     hiddenimports=[],
     hookspath=[],
-    excludes=EXCLUIDOS,
+    excludes=EXCLUDED,
     noarchive=False,
 )
 
 pyz = PYZ(analysis.pure)  # noqa: F821
 
-COMUNES = dict(
+COMMON = dict(
     name="kobun",
     debug=False,
     strip=False,
     upx=False,
-    # Sin consola: es una app de ventana. En Windows evita la terminal negra
-    # que aparecería detrás.
+    # No console: this is a windowed app. On Windows it avoids the black
+    # terminal that would show up behind it.
     console=False,
-    # PyInstaller sólo usa el icono en Windows y macOS; en Linux lo resuelve el
-    # escritorio a partir del .desktop.
-    icon=str(RAIZ / "kobun" / "shared" / "icons" / "kobun.ico") if ES_WINDOWS else None,
+    # PyInstaller only uses the icon on Windows and macOS; on Linux the desktop
+    # resolves it from the .desktop entry.
+    icon=str(ROOT / "kobun" / "shared" / "icons" / "kobun.ico") if IS_WINDOWS else None,
 )
 
-if UN_SOLO_ARCHIVO:
-    exe = EXE(pyz, analysis.scripts, analysis.binaries, analysis.datas, **COMUNES)  # noqa: F821
+if ONE_FILE:
+    exe = EXE(pyz, analysis.scripts, analysis.binaries, analysis.datas, **COMMON)  # noqa: F821
 else:
-    # En modo directorio el ejecutable queda liviano y las dependencias van
-    # afuera: arranca más rápido porque no descomprime nada en cada ejecución.
-    exe = EXE(pyz, analysis.scripts, exclude_binaries=True, **COMUNES)  # noqa: F821
-    coleccion = COLLECT(  # noqa: F821
+    # In directory mode the executable stays small and the dependencies sit
+    # beside it: it starts faster because nothing is unpacked on every run.
+    exe = EXE(pyz, analysis.scripts, exclude_binaries=True, **COMMON)  # noqa: F821
+    collection = COLLECT(  # noqa: F821
         exe, analysis.binaries, analysis.datas, strip=False, upx=False, name="kobun",
     )

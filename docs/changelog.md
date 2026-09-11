@@ -2,6 +2,62 @@
 
 <!-- version list -->
 
+## v0.3.0-alpha.4 (2026-08-31)
+
+### Features
+
+- Add extraction functionality for images from PDFs
+  ([`35ecc30`](https://github.com/IgnacioBarraza/kobun/commit/35ecc3076ab40060e4b96955d1dbaf245465f34d))
+
+
+## v0.3.0-alpha.3 (2026-08-20)
+
+### Bug Fixes
+
+- Correct version extraction in unit tests
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+- Update installer versioning in Inno Setup script
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+### Chores
+
+- Update requirements and pyproject.toml for versioning
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+### Features
+
+- Add development and releasing documentation
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+- Include new screenshots
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+### Refactoring
+
+- Unify naming conventions in Inno Setup script
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+- Update PyInstaller spec file comments and variable names
+  ([`94b4989`](https://github.com/IgnacioBarraza/kobun/commit/94b49891618cc694c61eb90960354f5260dd582e))
+
+
+## v0.3.0-alpha.2 (2026-08-20)
+
+### Bug Fixes
+
+- Update repository links in project files to reflect new naming convention
+  ([`c48d511`](https://github.com/IgnacioBarraza/kobun/commit/c48d511864468892843f9c7d9c78764c27f22c60))
+
+
+## v0.3.0-alpha.1 (2026-08-20)
+
+### Features
+
+- **release**: Add back-merge job to synchronize main with develop after definitive releases
+  ([`ebfd81a`](https://github.com/IgnacioBarraza/kobun_pdf_splitter/commit/ebfd81a94da0b568573baf7b6abcc86aeb7f6928))
+
+
 ## v0.2.0 (2026-08-20)
 
 ### Refactoring

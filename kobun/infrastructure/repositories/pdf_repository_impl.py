@@ -6,16 +6,13 @@ from pymupdf import Document
 
 from kobun.application.interfaces.pdf_repository import PdfRepository
 from kobun.domain.pdf.entities.pdf_document import PdfDocument
-from kobun.domain.pdf.exceptions.encrypted_pdf_exception import EncryptedPdfException
-from kobun.domain.pdf.exceptions.invalid_pdf_exception import InvalidPdfException
-from kobun.domain.pdf.exceptions.pdf_not_found_exception import PdfNotFoundException
 from kobun.domain.pdf.value_objects.page_range import PageRange
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.domain.pdf.value_objects.pdf_metadata import PdfMetadata
+from kobun.infrastructure.pdf_engine.pdf_document_opener import PdfDocumentOpener
 from kobun.infrastructure.pdf_engine.pdf_engine_adapter import PdfEngineAdapter
 
 _CHUNK_SIZE = 4096
-_PDF_SUFFIX = ".pdf"
 
 
 class PyMuPdfRepository(PdfRepository):
@@ -26,8 +23,11 @@ class PyMuPdfRepository(PdfRepository):
     Every page index it receives is 1-based.
     """
 
-    def __init__(self, engine: PdfEngineAdapter):
+    def __init__(self, engine: PdfEngineAdapter, opener: Optional[PdfDocumentOpener] = None):
         self.engine = engine
+        # Built from the engine when not supplied, so the existing callers that
+        # pass only the engine keep working.
+        self._opener = opener or PdfDocumentOpener(engine)
 
     # =========================
     # Internal Helpers
@@ -48,62 +48,12 @@ class PyMuPdfRepository(PdfRepository):
 
         return sha256.hexdigest()
 
-    def _validate_source_file(self, file_path: Path) -> None:
-        """
-        Cheap checks before calling the engine.
-
-        They matter most for drag & drop, which can drop directories, images or
-        empty files: without them, the first visible error would be a raw
-        PyMuPDF exception.
-        """
-        if not file_path.exists():
-            raise PdfNotFoundException(f"No se encuentra el archivo: {file_path}")
-
-        if not file_path.is_file():
-            raise InvalidPdfException(f"La ruta no es un archivo: {file_path}")
-
-        if file_path.suffix.lower() != _PDF_SUFFIX:
-            raise InvalidPdfException(
-                f"'{file_path.name}' no es un PDF: se esperaba la extensión {_PDF_SUFFIX}."
-            )
-
-        if file_path.stat().st_size == 0:
-            raise InvalidPdfException(f"El archivo está vacío: {file_path.name}")
-
     def _open_engine_document(self, file_path: Path) -> Document:
         """
-        The single point of opening: it validates the file and translates any
-        engine failure into a domain exception, so no layer above has to know
-        PyMuPDF's errors.
+        Delegates to PdfDocumentOpener, which is shared with the asset
+        extractor so both reject the same files with the same messages.
         """
-        self._validate_source_file(file_path)
-
-        try:
-            doc = self.engine.open_document(file_path)
-        except Exception as e:
-            raise InvalidPdfException(
-                f"No se pudo leer '{file_path.name}': el archivo está corrupto "
-                f"o no es un PDF válido."
-            ) from e
-
-        try:
-            if self.engine.needs_password(doc):
-                raise EncryptedPdfException(
-                    f"'{file_path.name}' está protegido con contraseña y no puede procesarse."
-                )
-
-            if not self.engine.is_pdf(doc):
-                raise InvalidPdfException(
-                    f"'{file_path.name}' no es un PDF, aunque tenga esa extensión."
-                )
-
-            if self.engine.get_page_count(doc) == 0:
-                raise InvalidPdfException(f"'{file_path.name}' no contiene páginas.")
-        except Exception:
-            self.engine.close_document(doc)
-            raise
-
-        return doc
+        return self._opener.open(file_path)
 
     def _build_pdf_document(self, file_path: Path) -> PdfDocument:
         """

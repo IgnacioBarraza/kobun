@@ -51,6 +51,70 @@ class FileStorage(ABC):
         pass
 
     @abstractmethod
+    def create_directory(self, directory: Path) -> None:
+        """
+        Creates the directory, including any missing parent, and does nothing
+        if it already exists.
+
+        :raises InvalidOutputPathException: If it cannot be created.
+        """
+        pass
+
+    @abstractmethod
+    def directory_has_files(self, directory: Path) -> bool:
+        """
+        True if the directory exists and holds at least one entry.
+
+        Used to decide whether writing an extraction into it would mix new
+        files with someone else's, which is what the overwrite policy is asked
+        about.
+        """
+        pass
+
+    @abstractmethod
+    def remove_directory_if_empty(self, directory: Path) -> bool:
+        """
+        Deletes the directory only if it holds nothing, and reports whether it
+        did.
+
+        Exists so an extraction that found nothing does not leave a folder
+        behind. Probing a few pages for images is a normal thing to do, and each
+        probe leaving an empty "libro_imagenes_7" next to the PDF turns the
+        feature into litter.
+
+        Never recursive, and never on a directory with content: this cleans up
+        after Kobun, it does not delete the user's files.
+        """
+        pass
+
+    @abstractmethod
+    def write_bytes(self, path: Path, data: bytes) -> None:
+        """
+        Writes a file whole, replacing it if it exists.
+
+        It exists so the extraction use case can persist images without
+        importing `open`: the application layer must not touch the filesystem
+        directly, and an extraction writes files that are not PDFs and
+        therefore never pass through the PDF engine.
+
+        :raises InvalidOutputPathException: If the write fails.
+        """
+        pass
+
+    @abstractmethod
+    def reveal_in_file_manager(self, path: Path) -> None:
+        """
+        Shows the file or folder in the system's file manager: selected inside
+        its folder when it is a file, opened when it is a folder.
+
+        It does not wait for the manager to finish: it only launches it.
+
+        :raises FileOpenException: If the path does not exist or the system
+            could not launch anything.
+        """
+        pass
+
+    @abstractmethod
     def open_in_default_app(self, path: Path) -> None:
         """
         Opens the file with the system's default application.

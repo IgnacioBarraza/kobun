@@ -41,7 +41,7 @@ release = ["python-semantic-release>=10,<11"]
 kobun = "kobun.presentation.qt.qt_app:run"
 
 [project.urls]
-Repository = "https://github.com/IgnacioBarraza/kobun_pdf_splitter"
+Repository = "https://github.com/IgnacioBarraza/kobun"
 
 [tool.setuptools.dynamic]
 # A single source of truth for the version: the package.
@@ -80,7 +80,7 @@ version_variables = [
     # The Windows installer declares its own version, and falling behind is not
     # noticed until someone installs a setup labelled with an old one. The pattern
     # accepts C-macro style definitions, so #define is enough.
-    "packaging/kobun.iss:MiVersion",
+    "packaging/kobun.iss:MyAppVersion",
 ]
 tag_format = "v{version}"
 

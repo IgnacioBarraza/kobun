@@ -118,3 +118,50 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ needs.version.outputs.tag }}" ${{ matrix.assets }} --clobber
+
+  back-merge:
+    name: back-merge into develop
+    needs: version
+    # Only after a definitive release: main is then one commit ahead of develop
+    # —the release commit, which carries the version bump and the changelog
+    # entry— and that commit touches files nobody edits by hand. Left behind, the
+    # next develop → main pull request conflicts on all three of them.
+    if: github.ref_name == 'main' && needs.version.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    environment: KOBUN_RELEASE
+    # Shares the group with the versioning job so a release on develop cannot
+    # interleave with this merge and produce a conflict out of thin air.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: GitHub App token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          fetch-depth: 0
+          token: ${{ steps.app.outputs.token }}
+
+      - name: Merge main into develop
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          git config user.name "kobun-release-bot[bot]"
+          git config user.email "318829460+kobun-release-bot[bot]@users.noreply.github.com"
+
+          # [skip ci] because the tree being merged is the one main just tested.
+          if git merge --no-edit -m "chore(release): back-merge ${TAG} into develop [skip ci]" origin/main; then
+            git push origin develop
+            echo "develop is now at ${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::error::The back-merge conflicts. Resolve it by hand: git checkout develop && git merge origin/main"
+            exit 1
+          fi

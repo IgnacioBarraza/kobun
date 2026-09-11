@@ -5,11 +5,15 @@ from uuid import UUID
 
 import pytest
 
+from kobun.application.dto.extract_assets_response import ExtractAssetsResponse
 from kobun.application.dto.split_pdf_response import SplitPdfResponse
 from kobun.application.interfaces.history_repository import HistoryRepository
 from kobun.application.use_cases.list_history_use_case import ListHistoryUseCase
+from kobun.application.use_cases.record_extraction_use_case import RecordExtractionUseCase
 from kobun.application.use_cases.record_split_use_case import RecordSplitUseCase
 from kobun.domain.history.entities.export_record import ExportRecord
+from kobun.domain.history.value_objects.export_kind import ExportKind
+from kobun.domain.pdf.value_objects.extraction_mode import ExtractionMode
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.infrastructure.filesystem.local_file_storage import LocalFileStorage
 
@@ -183,3 +187,160 @@ def test_entry_string_flags_unavailable_files(listing, tmp_path):
     use_case, _ = listing([record(tmp_path / "borrado.pdf")])
 
     assert str(use_case.execute()[0]).endswith("(no disponible)")
+# =========================
+# Registro de extracciones
+# =========================
+
+def extraction(**overrides) -> ExtractAssetsResponse:
+    defaults = dict(
+        source_path=Path("/libros/book.pdf"),
+        selection=PageSelection.parse("1-5"),
+        mode=ExtractionMode.EMBEDDED_IMAGES,
+        output_directory=Path("/libros/book_imagenes_1-5"),
+        files=(
+            Path("/libros/book_imagenes_1-5/book_p002_img01.png"),
+            Path("/libros/book_imagenes_1-5/book_p004_img01.png"),
+        ),
+        total_size_bytes=4096,
+        completed_at=WHEN,
+    )
+    return ExtractAssetsResponse(**{**defaults, **overrides})
+
+
+def test_an_extraction_is_recorded_as_its_folder():
+    repository = InMemoryHistoryRepository()
+
+    stored = RecordExtractionUseCase(repository).execute(extraction())
+
+    assert stored.output_path == Path("/libros/book_imagenes_1-5")
+    assert stored.kind is ExportKind.IMAGES
+    assert stored.item_count == 2
+    assert stored.size_bytes == 4096
+    assert repository.records == [stored]
+
+
+def test_the_recorded_page_count_is_what_was_asked_for():
+    """
+    Not the number of files: three images can come from one page, and the
+    history's "pages" column is about the selection.
+    """
+    repository = InMemoryHistoryRepository()
+
+    stored = RecordExtractionUseCase(repository).execute(
+        extraction(selection=PageSelection.parse("1-5,10"))
+    )
+
+    assert stored.page_count == 6
+
+
+def test_the_raster_mode_is_recorded_as_a_different_kind():
+    repository = InMemoryHistoryRepository()
+
+    stored = RecordExtractionUseCase(repository).execute(
+        extraction(mode=ExtractionMode.PAGE_RASTER)
+    )
+
+    assert stored.kind is ExportKind.PAGES
+
+
+def test_an_extraction_that_found_nothing_is_not_recorded():
+    """
+    Nothing was produced, so there is no file for the user to come back to and
+    the entry would only be noise in the list.
+    """
+    repository = InMemoryHistoryRepository()
+
+    assert RecordExtractionUseCase(repository).execute(
+        extraction(files=(), total_size_bytes=0)
+    ) is None
+    assert repository.records == []
+
+
+def test_an_extraction_folder_that_exists_is_available(tmp_path):
+    folder = tmp_path / "book_imagenes_1-5"
+    folder.mkdir()
+    repository = InMemoryHistoryRepository([
+        ExportRecord(
+            source_path=Path("/libros/book.pdf"),
+            selection=PageSelection.parse("1-5"),
+            output_path=folder,
+            page_count=5,
+            size_bytes=1024,
+            created_at=WHEN,
+            kind=ExportKind.IMAGES,
+            item_count=4,
+        )
+    ])
+
+    entries = ListHistoryUseCase(repository, LocalFileStorage()).execute()
+
+    assert entries[0].is_available is True
+
+
+def test_a_deleted_extraction_folder_is_flagged(tmp_path):
+    repository = InMemoryHistoryRepository([
+        ExportRecord(
+            source_path=Path("/libros/book.pdf"),
+            selection=PageSelection.parse("1-5"),
+            output_path=tmp_path / "borrada",
+            page_count=5,
+            size_bytes=1024,
+            created_at=WHEN,
+            kind=ExportKind.IMAGES,
+            item_count=4,
+        )
+    ])
+
+    entries = ListHistoryUseCase(repository, LocalFileStorage()).execute()
+
+    assert entries[0].is_available is False
+
+
+def test_a_file_where_an_extraction_folder_should_be_is_not_available(tmp_path):
+    """The shape has to match: a file is not the folder the entry claims to be."""
+    impostor = tmp_path / "book_imagenes_1-5"
+    impostor.write_bytes(b"no soy una carpeta")
+    repository = InMemoryHistoryRepository([
+        ExportRecord(
+            source_path=Path("/libros/book.pdf"),
+            selection=PageSelection.parse("1-5"),
+            output_path=impostor,
+            page_count=5,
+            size_bytes=1024,
+            created_at=WHEN,
+            kind=ExportKind.IMAGES,
+            item_count=4,
+        )
+    ])
+
+    entries = ListHistoryUseCase(repository, LocalFileStorage()).execute()
+
+    assert entries[0].is_available is False
+@pytest.mark.parametrize("mode", list(ExtractionMode))
+def test_every_extraction_mode_maps_to_a_history_kind(mode):
+    """
+    A mode missing from the mapping is a KeyError at the end of a finished
+    extraction —the files are already written— reported to the user as an
+    unexpected error. That is exactly how adding the figures mode broke it, so
+    the check is over the enum rather than over a list written by hand.
+    """
+    repository = InMemoryHistoryRepository()
+
+    stored = RecordExtractionUseCase(repository).execute(extraction(mode=mode))
+
+    assert stored is not None
+    assert stored.kind in tuple(ExportKind)
+
+
+def test_the_figures_mode_is_recorded_as_images():
+    """
+    Both image-producing modes are one kind: either way the folder holds images,
+    and which were copied and which were rendered is legible in their names.
+    """
+    repository = InMemoryHistoryRepository()
+
+    stored = RecordExtractionUseCase(repository).execute(
+        extraction(mode=ExtractionMode.FIGURES)
+    )
+
+    assert stored.kind is ExportKind.IMAGES

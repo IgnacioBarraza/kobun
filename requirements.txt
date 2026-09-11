@@ -1,5 +1,4 @@
-# Las dependencias reales se declaran en pyproject.toml, que es la única
-# fuente de verdad. Este archivo existe para que el comando del README siga
-# funcionando e instala el proyecto en modo editable con sus extras de
-# desarrollo.
+# The real dependencies are declared in pyproject.toml, which is the single
+# source of truth. This file exists so the command in the README keeps working;
+# it installs the project in editable mode with its development extras.
 -e .[dev]
