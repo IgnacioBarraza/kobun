@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 from kobun.domain.pdf.services.asset_extractor_service import DEFAULT_DPI, MAX_DPI, MIN_DPI
 from kobun.domain.pdf.value_objects.extraction_mode import ExtractionMode
 from kobun.domain.pdf.value_objects.overwrite_policy import OverwritePolicy
+from kobun.presentation import selection_feedback
+from kobun.presentation.qt import styling
 
 MODE_LABELS = {
     ExtractionMode.FIGURES: "Las imágenes y figuras de las páginas",
@@ -108,6 +110,13 @@ class ExtractOptionsWidget(QWidget):
         self.input_selection.setPlaceholderText("1-5,10-15  ·  7  ·  20-40")
         self.input_selection.textChanged.connect(self.selection_changed)
         layout.addWidget(self.input_selection)
+
+        # Same live explanation as the split screen: how many pages were asked
+        # for, or why the range cannot be used.
+        self.label_hint = QLabel(selection_feedback.EMPTY_HINT)
+        self.label_hint.setObjectName("SecondaryText")
+        self.label_hint.setWordWrap(True)
+        layout.addWidget(self.label_hint)
 
         self.row_dpi = QWidget()
         dpi_row = QHBoxLayout(self.row_dpi)
@@ -274,11 +283,22 @@ class ExtractOptionsWidget(QWidget):
         self._suggested_path = shown
         self._render_folder()
 
+    def show_selection_feedback(self, feedback) -> None:
+        """
+        Reports what the typed selection means, or why it cannot be used. The
+        wording comes from `selection_feedback`; the widget only paints it.
+        """
+        self.label_hint.setText(feedback.message)
+        styling.apply_text_role(
+            self.label_hint, styling.ERROR if feedback.is_error else styling.SECONDARY
+        )
+
     def clear(self) -> None:
         self.input_selection.clear()
         self.input_output.clear()
         self._suggested_path = None
         self._render_folder()
+        self.show_selection_feedback(selection_feedback.describe(""))
 
     def set_enabled(self, enabled: bool) -> None:
         self.combo_mode.setEnabled(enabled)
