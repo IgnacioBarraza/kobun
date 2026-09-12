@@ -31,6 +31,9 @@ from kobun.application.use_cases.record_extraction_use_case import (  # noqa: E4
     RecordExtractionUseCase,
 )
 from kobun.application.use_cases.record_split_use_case import RecordSplitUseCase  # noqa: E402
+from kobun.application.use_cases.render_page_preview_use_case import (  # noqa: E402
+    RenderPagePreviewUseCase,
+)
 from kobun.application.use_cases.split_pdf_use_case import SplitPdfUseCase  # noqa: E402
 from kobun.domain.pdf.services.asset_extractor_service import (  # noqa: E402
     AssetExtractorService,
@@ -50,8 +53,12 @@ from kobun.infrastructure.repositories.json_preferences_repository import (  # n
 from kobun.infrastructure.repositories.pdf_asset_extractor_impl import (  # noqa: E402
     PyMuPdfAssetExtractor,
 )
+from kobun.infrastructure.repositories.pdf_page_renderer_impl import (  # noqa: E402
+    PyMuPdfPageRenderer,
+)
 from kobun.infrastructure.repositories.pdf_repository_impl import PyMuPdfRepository  # noqa: E402
 from kobun.infrastructure.ui.theme_loader import JsonThemeSource  # noqa: E402
+from kobun.presentation import selection_feedback  # noqa: E402
 from kobun.presentation.qt.windows.main_window import MainWindow  # noqa: E402
 from kobun.presentation.qt.windows.ui_main_window import EXTRACT_PAGE  # noqa: E402
 from kobun.presentation.viewmodels.pdf_view_model import PdfViewModel  # noqa: E402
@@ -180,6 +187,9 @@ def build_view_model(history_repository, file_storage=None):
             file_storage=file_storage,
         ),
         record_extraction_use_case=RecordExtractionUseCase(history_repository),
+        preview_use_case=RenderPagePreviewUseCase(
+            pdf_repository, PyMuPdfPageRenderer(engine, opener)
+        ),
     )
 
 
@@ -1623,3 +1633,627 @@ def test_a_document_folder_is_still_the_default_when_nothing_was_chosen(window, 
     window.ui.split_options.input_selection.setText("1-3")
 
     assert window.ui.split_options.destination == source_pdf.parent / "libro_1-3.pdf"
+# =========================
+# Cuántas páginas, mientras se tipea
+# =========================
+
+def test_the_hint_counts_the_pages_being_asked_for(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("2-7")
+
+    assert window.ui.split_options.label_hint.text() == "6 páginas"
+
+
+def test_the_hint_explains_a_range_past_the_last_page(window, qt_app, source_pdf):
+    """
+    The button used to just go dead, leaving the user to guess whether the
+    problem was the syntax, the file or the page count.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-5,20")
+    hint = window.ui.split_options.label_hint
+
+    assert "12 páginas" in hint.text()
+    assert "20" in hint.text()
+    assert hint.objectName() == "ErrorText"
+
+
+def test_a_range_past_the_last_page_keeps_the_button_disabled(window, qt_app, source_pdf):
+    """
+    The screen already knows the PDF has twelve pages, so offering to export
+    page twenty and answering with a modal is a worse version of the hint.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-5,20")
+
+    assert window.ui.btn_process.isEnabled() is False
+
+
+def test_the_hint_reports_merged_ranges(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("3-8,1-5")
+
+    assert window.ui.split_options.label_hint.text() == "8 páginas · se toma 1-8"
+
+
+def test_a_syntax_error_is_explained_in_place(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-")
+
+    assert "Falta un número" in window.ui.split_options.label_hint.text()
+    assert window.ui.split_options.label_hint.objectName() == "ErrorText"
+
+
+def test_clearing_the_field_puts_the_hint_back(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("abc")
+
+    window.ui.split_options.input_selection.clear()
+    hint = window.ui.split_options.label_hint
+
+    assert hint.text() == selection_feedback.EMPTY_HINT
+    assert hint.objectName() == "SecondaryText"
+
+
+def test_the_hint_is_recomputed_when_another_document_is_loaded(window, qt_app, source_pdf, tmp_path):
+    """
+    The same text means something different against a 12 page PDF and a 3 page
+    one.
+    """
+    corto = tmp_path / "corto.pdf"
+    doc = pymupdf.open()
+    for _ in range(3):
+        doc.new_page()
+    doc.save(corto)
+    doc.close()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-10")
+    assert window.ui.split_options.label_hint.text() == "10 páginas"
+
+    load(window, qt_app, corto)
+
+    assert window.ui.split_options.label_hint.objectName() == "ErrorText"
+    assert "3 páginas" in window.ui.split_options.label_hint.text()
+
+
+def test_the_extract_screen_counts_the_same_way(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.extract_options.input_selection.setText("4-9")
+
+    assert window.ui.extract_options.label_hint.text() == "6 páginas"
+
+
+def test_the_extract_button_respects_the_page_count(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.extract_options.input_selection.setText("1-99")
+
+    assert window.ui.btn_extract_process.isEnabled() is False
+
+
+# =========================
+# Vista previa
+# =========================
+
+def test_no_preview_before_a_document_is_open(window):
+    assert window.ui.split_preview.label_position.text() == ""
+    assert window.ui.split_preview.btn_next.isEnabled() is False
+
+
+def test_opening_a_pdf_previews_its_first_page(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    preview = window.ui.split_preview
+
+    assert preview.label_position.text() == "Página 1 de 12"
+    assert preview.label_image.pixmap().isNull() is False, "Tiene que mostrar una imagen"
+
+
+def test_the_preview_follows_the_selection(window, qt_app, source_pdf):
+    """
+    What the user is checking is whether the chapter starts where they think it
+    does.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("7-9")
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 7 de 12"
+
+
+def test_editing_the_range_without_moving_its_start_leaves_the_preview_alone(
+    window, qt_app, source_pdf
+):
+    """
+    The condition that makes the panel usable: re-jumping on every keystroke
+    would pull the user back every time they looked at the next page.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("7-9")
+    settle(qt_app)
+
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+    assert window.ui.split_preview.label_position.text() == "Página 8 de 12"
+
+    window.ui.split_options.input_selection.setText("7-11")
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 8 de 12"
+
+
+def test_moving_the_start_of_the_range_moves_the_preview(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("7-9")
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("4-9")
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 4 de 12"
+
+
+def test_the_arrows_step_through_the_document(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+    assert window.ui.split_preview.label_position.text() == "Página 2 de 12"
+
+    window.ui.split_preview.btn_previous.click()
+    settle(qt_app)
+    assert window.ui.split_preview.label_position.text() == "Página 1 de 12"
+
+
+def test_the_arrows_stop_at_the_edges(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    preview = window.ui.split_preview
+
+    assert preview.btn_previous.isEnabled() is False, "Está en la primera"
+
+    window.ui.split_options.input_selection.setText("12")
+    settle(qt_app)
+
+    assert preview.label_position.text() == "Página 12 de 12"
+    assert preview.btn_next.isEnabled() is False, "Está en la última"
+
+
+def test_the_preview_says_whether_the_page_is_included(window, qt_app, source_pdf):
+    """
+    The point of looking at a page before splitting: a page number alone does
+    not answer it once the selection has several ranges.
+    """
+    load(window, qt_app, source_pdf)
+    preview = window.ui.split_preview
+
+    window.ui.split_options.input_selection.setText("7-9")
+    settle(qt_app)
+    assert "Entra" in preview.label_membership.text()
+
+    for _ in range(3):
+        preview.btn_next.click()
+        settle(qt_app)
+
+    assert preview.label_position.text() == "Página 10 de 12"
+    assert preview.label_membership.text() == "No entra en la selección"
+
+
+def test_a_page_inside_a_later_range_counts_as_included(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-2,11")
+    settle(qt_app)
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 2 de 12"
+    assert "Entra" in window.ui.split_preview.label_membership.text()
+
+
+def test_nothing_is_claimed_about_membership_without_a_selection(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    assert window.ui.split_preview.label_membership.text() == ""
+
+
+def test_an_unusable_selection_claims_nothing_either(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("7-9")
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("7-")
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_membership.text() == ""
+
+
+def test_a_second_document_resets_the_preview(window, qt_app, source_pdf, tmp_path):
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    for _ in range(4):
+        doc.new_page().insert_text((72, 90), "otro", fontsize=20)
+    doc.save(otro)
+    doc.close()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+
+    load(window, qt_app, otro)
+
+    assert window.ui.split_preview.label_position.text() == "Página 1 de 4"
+
+
+def test_a_failed_load_leaves_no_stale_page_on_screen(window, qt_app, source_pdf, tmp_path):
+    roto = tmp_path / "roto.pdf"
+    roto.write_bytes(b"no soy un pdf")
+
+    load(window, qt_app, source_pdf)
+    assert window.ui.split_preview.label_image.pixmap().isNull() is False
+
+    load(window, qt_app, roto)
+
+    assert window.ui.split_preview.label_image.pixmap().isNull() is True
+    assert window.ui.split_preview.label_position.text() == ""
+
+
+def test_a_rendered_page_is_not_rendered_twice(window, qt_app, source_pdf):
+    """
+    Flipping back through a chapter has to be free; a dense page costs tens of
+    milliseconds to paint.
+    """
+    load(window, qt_app, source_pdf)
+    view_model = window._view_model
+
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+    cached = len(view_model._preview_cache)
+
+    window.ui.split_preview.btn_previous.click()
+    settle(qt_app)
+
+    assert len(view_model._preview_cache) == cached, "La página 1 ya estaba renderizada"
+
+
+def test_the_preview_does_not_block_the_window(window, qt_app, source_pdf):
+    """
+    A preview is not an export: it must not show the spinner or disable the
+    fields, or typing a range would flicker the whole screen.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_preview.btn_next.click()
+    busy_during = window.ui.progress.isVisible()
+    fields_live = window.ui.split_options.input_selection.isEnabled()
+    settle(qt_app)
+
+    assert busy_during is False
+    assert fields_live is True
+
+
+def test_the_position_updates_before_the_image_arrives(window, qt_app, source_pdf):
+    """
+    Pressing an arrow on a dense page would otherwise look like nothing
+    happened until it finished painting.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_preview.btn_next.click()
+
+    assert window.ui.split_preview.label_position.text() == "Página 2 de 12"
+def test_a_late_render_does_not_overwrite_a_newer_page(window, qt_app, source_pdf):
+    """
+    Typing "1-5,10-15" moves the preview several times, and what ends up on
+    screen has to be the page last asked for, not the last one to finish
+    painting.
+
+    Asserted on the **image** and not on the position label: a stale result
+    repaints the picture while the label keeps saying the right number, which is
+    exactly the mismatch the guard exists to prevent. The stale bytes are not a
+    real PNG, so without the guard the panel drops to its failure state.
+    """
+    from kobun.application.dto.page_preview import PagePreview
+
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("5-9")
+    settle(qt_app)
+    assert window.ui.split_preview.label_image.pixmap().isNull() is False
+
+    view_model = window._view_model
+    stale = PagePreview(page_number=2, data=b"no soy un png", width=420, height=594)
+    view_model._on_preview_ready(stale, token=view_model._preview_token - 1, target_width=420)
+
+    assert window.ui.split_preview.label_position.text() == "Página 5 de 12"
+    assert window.ui.split_preview.label_image.pixmap().isNull() is False, (
+        "Un render viejo no debe repintar la página que está en pantalla"
+    )
+
+
+def test_a_late_render_is_still_cached(window, qt_app, source_pdf):
+    """
+    It cost the same to make, and the user may well come back to that page.
+    """
+    from kobun.application.dto.page_preview import PagePreview
+
+    load(window, qt_app, source_pdf)
+    view_model = window._view_model
+
+    stale = PagePreview(page_number=9, data=b"\x89PNG", width=420, height=594)
+    view_model._on_preview_ready(stale, token=view_model._preview_token - 1, target_width=420)
+
+    assert (9, 420) in view_model._preview_cache
+
+
+def test_a_late_failure_does_not_blank_a_working_page(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    view_model = window._view_model
+
+    view_model._on_preview_failed(RuntimeError("tarde"), token=view_model._preview_token - 1)
+
+    assert window.ui.split_preview.label_image.pixmap().isNull() is False
+
+
+def test_a_preview_that_fails_is_reported_without_a_dialog(window, qt_app, source_pdf, dialogs):
+    """
+    A page that cannot be painted is a broken preview, not a failed export, and
+    the user did not ask for it in the first place.
+    """
+    load(window, qt_app, source_pdf)
+
+    source_pdf.unlink()
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+
+    assert dialogs.errors == []
+    assert window.ui.split_preview.label_image.pixmap().isNull() is True
+    assert window.ui.label_status.text() != ""
+def test_the_arrows_come_back_after_an_export(window, qt_app, source_pdf):
+    """
+    Regression: the panel used to read the buttons' own state to decide whether
+    to re-enable them, and a disabled button always answers "no", so the arrows
+    stayed dead for the rest of the session.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("2-4")
+    settle(qt_app)
+
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    preview = window.ui.split_preview
+    assert preview.label_position.text() == "Página 2 de 12"
+    assert preview.btn_next.isEnabled() is True
+    assert preview.btn_previous.isEnabled() is True
+
+
+def test_the_arrows_freeze_while_an_export_runs(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("2-4")
+    settle(qt_app)
+
+    window.ui.btn_process.click()
+    frozen = window.ui.split_preview.btn_next.isEnabled()
+    settle(qt_app)
+
+    assert frozen is False
+
+
+def test_freezing_does_not_revive_an_edge_arrow(window, qt_app, source_pdf):
+    """
+    Coming back from busy restores what the page position allows, not everything.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("1-3")
+    settle(qt_app)
+
+    window.ui.btn_process.click()
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 1 de 12"
+    assert window.ui.split_preview.btn_previous.isEnabled() is False
+# =========================
+# Ver la página más grande
+# =========================
+
+def test_enlarging_is_offered_only_once_there_is_a_page(window, qt_app, source_pdf):
+    assert window.ui.split_preview.btn_enlarge.isEnabled() is False
+
+    load(window, qt_app, source_pdf)
+
+    assert window.ui.split_preview.btn_enlarge.isEnabled() is True
+
+
+def test_the_enlarge_button_opens_the_window(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    assert window._preview_dialog is not None
+    assert window._preview_dialog.isVisible() is True
+
+
+def test_clicking_the_thumbnail_opens_it_too(window, qt_app, source_pdf):
+    """
+    A small picture is the obvious thing to click when it is too small to read.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_preview.label_image.clicked.emit()
+    settle(qt_app)
+
+    assert window._preview_dialog.isVisible() is True
+
+
+def test_enlarging_without_a_document_does_nothing(window, qt_app):
+    window.ui.split_preview.enlarge_requested.emit()
+    settle(qt_app)
+
+    assert window._preview_dialog is None
+
+
+def test_the_enlarged_view_shows_the_same_page(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_options.input_selection.setText("6-9")
+    settle(qt_app)
+
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    enlarged = window._preview_dialog.preview
+
+    assert enlarged.label_position.text() == "Página 6 de 12"
+    assert enlarged.label_image.pixmap().isNull() is False
+    assert "Entra" in enlarged.label_membership.text()
+
+
+def test_the_enlarged_view_offers_no_second_enlarge(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    enlarged = window._preview_dialog.preview
+
+    assert enlarged.btn_enlarge.isVisibleTo(enlarged) is False
+
+
+def test_stepping_in_the_enlarged_view_moves_the_thumbnail(window, qt_app, source_pdf):
+    """
+    Both are views of the same state, so they can never show different pages.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    window._preview_dialog.preview.btn_next.click()
+    settle(qt_app)
+
+    assert window._preview_dialog.preview.label_position.text() == "Página 2 de 12"
+    assert window.ui.split_preview.label_position.text() == "Página 2 de 12"
+
+
+def test_typing_a_range_moves_the_enlarged_view_as_well(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("11-12")
+    settle(qt_app)
+
+    assert window._preview_dialog.preview.label_position.text() == "Página 11 de 12"
+
+
+def test_the_enlarged_view_asks_for_a_bigger_render(window, qt_app, source_pdf):
+    """
+    Scaling a thumbnail up is what makes an enlarged view look broken.
+    """
+    load(window, qt_app, source_pdf)
+    thumbnail_width = window._view_model._preview_width
+
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    assert window._view_model._preview_width > thumbnail_width
+
+
+def test_closing_it_goes_back_to_the_thumbnail_s_width(window, qt_app, source_pdf):
+    """
+    So the next jump while typing stays cheap.
+    """
+    load(window, qt_app, source_pdf)
+    thumbnail_width = window._view_model._preview_width
+
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    window._preview_dialog.close()
+    settle(qt_app)
+
+    assert window._view_model._preview_width == thumbnail_width
+
+
+def test_the_thumbnail_keeps_working_after_the_window_closes(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    window._preview_dialog.close()
+    settle(qt_app)
+
+    window.ui.split_preview.btn_next.click()
+    settle(qt_app)
+
+    assert window.ui.split_preview.label_position.text() == "Página 2 de 12"
+    assert window.ui.split_preview.label_image.pixmap().isNull() is False
+
+
+def test_a_closed_window_is_not_updated_any_more(window, qt_app, source_pdf):
+    """
+    A hidden view must not be painted: it would hold a pixmap of a page nobody
+    is looking at, and every render would be doing twice the work.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    window._preview_dialog.close()
+    settle(qt_app)
+
+    stale = window._preview_dialog.preview.label_position.text()
+    window.ui.split_options.input_selection.setText("9-10")
+    settle(qt_app)
+
+    assert window._preview_dialog.preview.label_position.text() == stale
+    assert window.ui.split_preview.label_position.text() == "Página 9 de 12"
+
+
+def test_reopening_it_catches_up_with_the_current_page(window, qt_app, source_pdf):
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+    window._preview_dialog.close()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("9-10")
+    settle(qt_app)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    assert window._preview_dialog.preview.label_position.text() == "Página 9 de 12"
+    assert window._preview_dialog.preview.label_image.pixmap().isNull() is False
+
+
+def test_loading_another_document_clears_the_enlarged_view(window, qt_app, source_pdf, tmp_path):
+    otro = tmp_path / "otro.pdf"
+    doc = pymupdf.open()
+    for _ in range(3):
+        doc.new_page()
+    doc.save(otro)
+    doc.close()
+
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    load(window, qt_app, otro)
+
+    assert window._preview_dialog.preview.label_position.text() == "Página 1 de 3"
+
+
+def test_the_enlarged_view_does_not_block_the_window(window, qt_app, source_pdf):
+    """
+    Modeless on purpose: it is a bigger look at the same page, not a question
+    being asked. A modal one would also have hung this test.
+    """
+    load(window, qt_app, source_pdf)
+    window.ui.split_preview.btn_enlarge.click()
+    settle(qt_app)
+
+    window.ui.split_options.input_selection.setText("3-4")
+    settle(qt_app)
+
+    assert window.ui.split_options.input_selection.isEnabled() is True
+    assert window.ui.btn_process.isEnabled() is True

@@ -16,7 +16,7 @@ def test_page_range_to_range_conversion():
 
 
 def test_page_range_error_when_start_is_greater_than_end():
-    with pytest.raises(InvalidPageRangeException, match="cannot be greater than"):
+    with pytest.raises(InvalidPageRangeException, match="no puede ser mayor"):
         PageRange(start=10, end=5)
 
 
@@ -47,12 +47,20 @@ def test_parse_ignores_surrounding_whitespace():
 
 
 def test_parse_error_on_missing_bound():
-    with pytest.raises(InvalidPageRangeException, match="Invalid page number"):
+    """
+    A half-typed range gets its own message: saying that '' is not a valid page
+    number reads like a bug, and this is what the field shows while the user is
+    still typing.
+    """
+    with pytest.raises(InvalidPageRangeException, match="Falta un número"):
         PageRange.parse("1-")
+
+    with pytest.raises(InvalidPageRangeException, match="Falta un número"):
+        PageRange.parse("-5")
 
 
 def test_parse_error_on_empty_text():
-    with pytest.raises(InvalidPageRangeException, match="cannot be empty"):
+    with pytest.raises(InvalidPageRangeException, match="no puede estar vac"):
         PageRange.parse("  ")
 
 
@@ -73,5 +81,5 @@ def test_merge_overlapping_ranges():
 
 
 def test_merge_error_on_disjoint_ranges():
-    with pytest.raises(InvalidPageRangeException, match="disjoint"):
+    with pytest.raises(InvalidPageRangeException, match="rangos separados"):
         PageRange(start=1, end=5).merge(PageRange(start=8, end=10))
