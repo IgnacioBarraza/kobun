@@ -16,9 +16,9 @@ class PageRange:
 
     def __post_init__(self) -> None:
         if self.start <= 0 or self.end <= 0:
-            raise InvalidPageRangeException(f"Invalid page range: {self.start}-{self.end}")
+            raise InvalidPageRangeException(f"Rango de páginas inválido: {self.start}-{self.end}. Las páginas se cuentan desde 1.")
         if self.start > self.end:
-            raise InvalidPageRangeException(f"Start page {self.start} cannot be greater than end page {self.end}")
+            raise InvalidPageRangeException(f"La página inicial {self.start} no puede ser mayor que la final {self.end}.")
 
     @classmethod
     def parse(cls, text: str) -> "PageRange":
@@ -32,7 +32,7 @@ class PageRange:
             raw = raw.replace(dash, "-")
 
         if not raw:
-            raise InvalidPageRangeException("Page range cannot be empty.")
+            raise InvalidPageRangeException("El rango de páginas no puede estar vacío.")
 
         parts = raw.split("-")
 
@@ -46,13 +46,20 @@ class PageRange:
                 end=cls._parse_page(parts[1], raw),
             )
 
-        raise InvalidPageRangeException(f"Invalid page range format: '{text}'. Expected '5' or '1-5'.")
+        raise InvalidPageRangeException(f"No se entiende el rango '{text}'. Se espera '5' o '1-5'.")
 
     @staticmethod
     def _parse_page(value: str, original: str) -> int:
         stripped = value.strip()
+
+        # A missing half —"1-" while still typing— deserves its own message:
+        # reporting that '' is not a valid number reads like a bug.
+        if not stripped:
+            raise InvalidPageRangeException(f"Falta un número en el rango '{original}'.")
+
         if not stripped.isdigit():
-            raise InvalidPageRangeException(f"Invalid page number '{stripped}' in range '{original}'.")
+            raise InvalidPageRangeException(f"'{stripped}' no es un número de página válido en '{original}'.")
+
         return int(stripped)
 
     @property
@@ -76,7 +83,7 @@ class PageRange:
         :raises InvalidPageRangeException: If the ranges are disjoint.
         """
         if not self.overlaps_or_touches(other):
-            raise InvalidPageRangeException(f"Cannot merge disjoint ranges: {self} and {other}.")
+            raise InvalidPageRangeException(f"No se pueden unir rangos separados: {self} y {other}.")
         return PageRange(start=min(self.start, other.start), end=max(self.end, other.end))
 
     def __str__(self) -> str:
