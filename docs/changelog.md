@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.4.0-alpha.2 (2026-09-13)
+
+### Features
+
+- Add hand-written release summary and archiving functionality
+  ([`496e314`](https://github.com/IgnacioBarraza/kobun/commit/496e3149e7d3c8ad9fafee72b41947f11185ed30))
+
+
 ## v0.4.0-alpha.1 (2026-09-13)
 
 ### Documentation
