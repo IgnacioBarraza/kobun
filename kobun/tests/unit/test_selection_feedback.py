@@ -63,27 +63,27 @@ def test_merged_ranges_are_reported_as_merged():
     The domain merges overlapping ranges, so "3-8,1-5" is eight pages and not
     thirteen. Reporting only the count would look like a bug.
     """
-    assert describe("3-8,1-5", page_count=12).message == "8 páginas · se toma 1-8"
+    assert describe("3-8,1-5", page_count=12).message == "8 páginas: 1-8"
 
 
 def test_a_repeated_page_is_counted_once():
-    assert describe("5,5", page_count=12).message == "1 página · se toma 5"
+    assert describe("5,5", page_count=12).message == "1 página: 5"
 
 
 def test_adjacent_ranges_are_reported_as_one():
-    assert describe("1-3,4-6", page_count=12).message == "6 páginas · se toma 1-6"
+    assert describe("1-3,4-6", page_count=12).message == "6 páginas: 1-6"
 
 
 def test_ranges_out_of_order_are_reported_sorted():
-    assert describe("10,2", page_count=12).message == "2 páginas · se toma 2,10"
+    assert describe("10,2", page_count=12).message == "2 páginas: 2,10"
 
 
 @pytest.mark.parametrize("text", ["1-5, 10", "1-5,10,", "1-5;10", "1-5 10", " 1-5,10 "])
 def test_cosmetic_differences_are_not_reported_as_a_rewrite(text):
     """
     A space, a trailing comma or a semicolon changes nothing about which pages
-    were chosen, and saying "se toma 1-5,10" for input that already said that
-    would be noise.
+    were chosen, and spelling the selection back out for input that already said
+    it would be noise.
     """
     assert describe(text, page_count=12).message == "6 páginas"
 
@@ -97,7 +97,7 @@ def test_a_range_past_the_last_page_is_an_error():
 
     assert feedback.is_error is True
     assert feedback.is_usable is False
-    assert feedback.message == "El PDF tiene 12 páginas y pediste hasta la 20."
+    assert feedback.message == "La página 20 no existe: este PDF llega hasta la 12."
 
 
 def test_the_last_page_is_within_bounds():
@@ -134,17 +134,35 @@ def test_letters_are_rejected_with_the_offending_text():
     assert "abc" in feedback.message
 
 
-def test_a_half_typed_range_says_a_number_is_missing():
+def test_a_half_typed_range_says_which_number_is_missing():
     """What the field shows constantly, since "1-5" passes through "1-"."""
-    assert "Falta un número" in describe("1-", page_count=12).message
+    assert describe("1-", page_count=12).message == (
+        "Falta la página en la que termina el rango."
+    )
 
 
-def test_a_backwards_range_says_so():
-    assert "no puede ser mayor" in describe("10-2", page_count=12).message
+def test_a_range_missing_its_start_says_so():
+    """The other half names itself too, instead of one sentence for both ends."""
+    assert describe("-5", page_count=12).message == (
+        "Falta la página en la que empieza el rango."
+    )
+
+
+def test_a_backwards_range_offers_the_fix():
+    """The fix is always the same two numbers the other way round."""
+    assert describe("10-2", page_count=12).message == "10-2 está al revés: escribí 2-10."
 
 
 def test_page_zero_is_rejected():
     assert describe("0", page_count=12).is_error is True
+
+
+def test_page_zero_does_not_echo_an_internal_range():
+    """
+    A lone "0" becomes the range 0-0 inside the domain, and answering "0-0" to
+    someone who typed one character shows them a shape they never wrote.
+    """
+    assert describe("0", page_count=12).message == "Las páginas se cuentan desde 1."
 
 
 def test_a_syntax_error_carries_no_selection():

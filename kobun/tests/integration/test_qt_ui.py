@@ -1655,8 +1655,7 @@ def test_the_hint_explains_a_range_past_the_last_page(window, qt_app, source_pdf
     window.ui.split_options.input_selection.setText("1-5,20")
     hint = window.ui.split_options.label_hint
 
-    assert "12 páginas" in hint.text()
-    assert "20" in hint.text()
+    assert hint.text() == "La página 20 no existe: este PDF llega hasta la 12."
     assert hint.objectName() == "ErrorText"
 
 
@@ -1677,15 +1676,41 @@ def test_the_hint_reports_merged_ranges(window, qt_app, source_pdf):
 
     window.ui.split_options.input_selection.setText("3-8,1-5")
 
-    assert window.ui.split_options.label_hint.text() == "8 páginas · se toma 1-8"
+    assert window.ui.split_options.label_hint.text() == "8 páginas: 1-8"
 
 
 def test_a_syntax_error_is_explained_in_place(window, qt_app, source_pdf):
     load(window, qt_app, source_pdf)
 
-    window.ui.split_options.input_selection.setText("1-")
+    window.ui.split_options.input_selection.setText("abc")
+    hint = window.ui.split_options.label_hint
 
-    assert "Falta un número" in window.ui.split_options.label_hint.text()
+    assert hint.text() == "'abc' no es un número de página."
+    assert hint.objectName() == "ErrorText"
+
+
+def test_a_range_still_being_typed_is_not_painted_as_an_error(window, qt_app, source_pdf):
+    """
+    "1-5" is reached by way of "1-", so turning the line red there made every
+    range flash an error at the person writing it. It still explains what is
+    missing, and the button still refuses to run.
+    """
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("1-")
+    hint = window.ui.split_options.label_hint
+
+    assert hint.text() == "Falta la página en la que termina el rango."
+    assert hint.objectName() == "SecondaryText", "No es un error: falta terminar"
+    assert window.ui.btn_process.isEnabled() is False
+
+
+def test_a_finished_but_wrong_range_is_painted_as_an_error(window, qt_app, source_pdf):
+    """The counterpart: "-5" is not halfway to anything, it is wrong."""
+    load(window, qt_app, source_pdf)
+
+    window.ui.split_options.input_selection.setText("-5")
+
     assert window.ui.split_options.label_hint.objectName() == "ErrorText"
 
 
@@ -1719,7 +1744,7 @@ def test_the_hint_is_recomputed_when_another_document_is_loaded(window, qt_app, 
     load(window, qt_app, corto)
 
     assert window.ui.split_options.label_hint.objectName() == "ErrorText"
-    assert "3 páginas" in window.ui.split_options.label_hint.text()
+    assert "hasta la 3" in window.ui.split_options.label_hint.text()
 
 
 def test_the_extract_screen_counts_the_same_way(window, qt_app, source_pdf):

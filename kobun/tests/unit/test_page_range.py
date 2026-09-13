@@ -16,7 +16,7 @@ def test_page_range_to_range_conversion():
 
 
 def test_page_range_error_when_start_is_greater_than_end():
-    with pytest.raises(InvalidPageRangeException, match="no puede ser mayor"):
+    with pytest.raises(InvalidPageRangeException, match="está al revés"):
         PageRange(start=10, end=5)
 
 
@@ -52,15 +52,15 @@ def test_parse_error_on_missing_bound():
     number reads like a bug, and this is what the field shows while the user is
     still typing.
     """
-    with pytest.raises(InvalidPageRangeException, match="Falta un número"):
+    with pytest.raises(InvalidPageRangeException, match="Falta la página"):
         PageRange.parse("1-")
 
-    with pytest.raises(InvalidPageRangeException, match="Falta un número"):
+    with pytest.raises(InvalidPageRangeException, match="Falta la página"):
         PageRange.parse("-5")
 
 
 def test_parse_error_on_empty_text():
-    with pytest.raises(InvalidPageRangeException, match="no puede estar vac"):
+    with pytest.raises(InvalidPageRangeException, match="Escribí un número de página"):
         PageRange.parse("  ")
 
 

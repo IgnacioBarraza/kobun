@@ -82,12 +82,12 @@ def test_parse_error_on_non_numeric_page():
 
 
 def test_parse_error_on_malformed_range():
-    with pytest.raises(InvalidPageRangeException, match="No se entiende el rango"):
+    with pytest.raises(InvalidPageRangeException, match="No se entiende"):
         PageSelection.parse("1-2-3")
 
 
 def test_parse_error_on_inverted_range():
-    with pytest.raises(InvalidPageRangeException, match="no puede ser mayor"):
+    with pytest.raises(InvalidPageRangeException, match="está al revés"):
         PageSelection.parse("10-5")
 
 
