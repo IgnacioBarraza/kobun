@@ -18,7 +18,9 @@ from kobun.domain.pdf.exceptions.invalid_page_range_exception import InvalidPage
 from kobun.domain.pdf.value_objects.page_selection import PageSelection
 from kobun.presentation.formatting import format_page_count
 
-EMPTY_HINT = "Separá los rangos con comas: 1-5,10-15,20"
+EMPTY_HINT = "Una página, un rango, o varios separados por comas."
+"""Says the rule, not more examples: the field's own placeholder already shows
+what they look like, and repeating it underneath was saying one thing twice."""
 
 
 @dataclass(frozen=True)
@@ -32,7 +34,12 @@ class SelectionFeedback:
     """
 
     message: str
+
     is_error: bool = False
+    """Whether it reads as a problem. A range still being typed is **not** one:
+    "1-5" is reached by way of "1-", and turning the line red on the way there
+    made every range flash an error at the person writing it."""
+
     selection: Optional[PageSelection] = None
 
     @property
@@ -55,12 +62,14 @@ def describe(raw_text: str, page_count: Optional[int] = None) -> SelectionFeedba
         selection = PageSelection.parse(text)
     except InvalidPageRangeException as error:
         # The domain's own message: it already says which part does not parse,
-        # and rewording it here would mean maintaining two explanations.
-        return SelectionFeedback(str(error), is_error=True)
+        # and rewording it here would mean maintaining two explanations. Whether
+        # it *reads* as a problem is this layer's call, because only the screen
+        # knows the range is still being typed.
+        return SelectionFeedback(str(error), is_error=not _is_unfinished(text))
 
     if page_count is not None and selection.max_page > page_count:
         return SelectionFeedback(
-            f"El PDF tiene {page_count} páginas y pediste hasta la {selection.max_page}.",
+            f"La página {selection.max_page} no existe: este PDF llega hasta la {page_count}.",
             is_error=True,
             selection=selection,
         )
@@ -83,7 +92,7 @@ def _summary(text: str, selection: PageSelection) -> str:
     if _normalized(text) == canonical:
         return count
 
-    return f"{count} · se toma {canonical}"
+    return f"{count}: {canonical}"
 
 
 def _normalized(text: str) -> str:
@@ -98,3 +107,13 @@ def _normalized(text: str) -> str:
     chunks = [chunk.strip() for chunk in text.split(",") if chunk.strip()]
 
     return ",".join(chunks)
+def _is_unfinished(text: str) -> bool:
+    """
+    Whether the text looks like a range halfway through being typed, rather than
+    a wrong one.
+
+    Only the trailing dash: "1-" is what "1-5" passes through, and it is the one
+    invalid state a person produces on their way to a valid one. "-5" and "10-2"
+    are finished and wrong, and are reported as such.
+    """
+    return text.rstrip().endswith("-")
