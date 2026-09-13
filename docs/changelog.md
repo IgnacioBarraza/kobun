@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.4.0-alpha.3 (2026-09-13)
+
+### Bug Fixes
+
+- Implement staging of highlights for release commits
+  ([`d304615`](https://github.com/IgnacioBarraza/kobun/commit/d30461520b4fedba66ecdd9c41a70b33a9c67b74))
+
+
 ## v0.4.0-alpha.2 (2026-09-13)
 
 ### Features
