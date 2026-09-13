@@ -91,9 +91,21 @@ allow_zero_version = true
 # promised stability yet.
 major_on_zero = false
 
-# The workflow builds the binaries on each system; semantic-release only
-# versions, so it has nothing to build here.
-build_command = ""
+# No distributions are built here —the workflow builds the binaries on each
+# system— but this hook runs at exactly the right moment for one thing: it fires
+# before the release commit and receives NEW_VERSION, so the summary of a
+# definitive version is filed and `next.md` emptied *inside* that commit. Doing
+# it afterwards would mean a second commit, and a release that commits twice is
+# a release that can fail halfway.
+#
+# It does nothing for a prerelease: an alpha is the same work in progress, and
+# its summary has to survive until the definitive version ships.
+build_command = "python3 scripts/release_notes.py --archive-released"
+
+# Files the release commit carries beyond the version bump and the changelog.
+# The whole folder, because the file being created is named after the version
+# and cannot be listed ahead of time.
+assets = ["docs/release-notes"]
 
 # The message is conventional on purpose: if commit format is ever validated,
 # the one the release writes itself cannot be the one that fails.

@@ -14,6 +14,13 @@ to download the app reads. The historical record is written by semantic-release
 into docs/changelog.md. That is why the two formats differ: one groups for
 reading, the other archives.
 
+A release page has two layers. The **summary** comes from
+docs/release-notes/next.md and is written by hand, because what a version gives
+someone is not in the commits: "implement page preview functionality with
+caching" and five variations of it say nothing to whoever downloads the app.
+The **commit log** is generated as before and folded underneath, so nothing is
+hidden and nothing shouts.
+
 No dependencies: this has to run on the release runner without installing the
 project.
 """
@@ -35,33 +42,25 @@ FIELD_SEPARATOR = "\x1f"
 # Marker for commits that do not follow the convention.
 NO_TYPE = "*"
 
-OTHER = "Other changes"
+OTHER = "Other Changes"
 
-# Changes that say nothing to someone who just wants to use the app: published,
-# but folded away.
-INTERNAL_TYPES = (
-    "refactor",
-    "chore",
-    "docs",
-    "doc",
-    "test",
-    "tests",
-    "build",
-    "ci",
-    "style",
-    "revert",
+# (title, the types it groups). The order is the order on the page.
+#
+# The names are the ones conventional-changelog uses, so a Kobun release reads
+# like every other release someone has seen. Maintenance gathers what does not
+# change the app itself; it is listed rather than hidden, because "there were no
+# changes" and "the changes were internal" are different things.
+SECTIONS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("Features", ("feat",)),
+    ("Bug Fixes", ("fix",)),
+    ("Performance Improvements", ("perf",)),
+    ("Documentation", ("docs", "doc")),
+    ("Tests", ("test", "tests")),
+    ("Maintenance", ("refactor", "chore", "build", "ci", "style", "revert")),
+    (OTHER, (NO_TYPE,)),
 )
 
-# (title, types it groups, folded). The order is the order in the notes.
-SECTIONS: Tuple[Tuple[str, Tuple[str, ...], bool], ...] = (
-    ("New", ("feat",), False),
-    ("Fixes", ("fix",), False),
-    ("Performance", ("perf",), False),
-    (OTHER, (NO_TYPE,), False),
-    ("Internal", INTERNAL_TYPES, True),
-)
-
-BREAKING_TITLE = "Breaking changes"
+BREAKING_TITLE = "Breaking Changes"
 
 # The commit semantic-release writes when versioning is not a change to the
 # project: it would show up as "chore(release): v0.2.0" in the middle of the
@@ -74,10 +73,30 @@ COMMIT_PATTERN = re.compile(
 
 VERSION_PATTERN = re.compile(r'__version__\s*=\s*["\']([^"\']+)["\']')
 
+HIGHLIGHTS_DIRECTORY = ROOT / "docs" / "release-notes"
+HIGHLIGHTS_FILE = HIGHLIGHTS_DIRECTORY / "next.md"
+
+# Everything between these is guidance for whoever writes the file, not for
+# whoever reads the release.
+COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
+
+# The `# v0.4.0` an archived summary opens with.
+TITLE_PATTERN = re.compile(r"\A#\s+\S+[^\n]*\n")
+
+STABLE_SUMMARY_TITLE = "## What's new in {version}"
+PRERELEASE_SUMMARY_TITLE = "## What is being tried, on the way to {version}"
+
+MISSING_SUMMARY_WARNING = (
+    "No summary was written for this version. "
+    "The changes are listed below, in the words of their commits."
+)
+
+CHANGES_SUMMARY = "All changes ({count})"
+
 PRERELEASE_WARNING = (
-    "> **Test build.** Published automatically from `develop` so changes can be tried "
-    "before they become a definitive version. It may have rough edges; for the latest "
-    "stable version go to "
+    "> **Test build on the way to {version}.** Published automatically from `develop` "
+    "so changes can be tried before they become a definitive version. It may have "
+    "rough edges; for the latest stable version go to "
     "[releases](https://github.com/IgnacioBarraza/kobun/releases/latest)."
 )
 
@@ -244,7 +263,7 @@ def _title_for(commit: Commit) -> str:
     if commit.breaking:
         return BREAKING_TITLE
 
-    for title, types, _ in SECTIONS:
+    for title, types in SECTIONS:
         if commit.type in types:
             return title
 
@@ -279,28 +298,48 @@ def group(commits: Sequence[Commit]) -> Dict[str, List[Commit]]:
 # =========================
 
 
-def _line(commit: Commit) -> str:
-    # The text goes exactly as it was committed: capitalising it would break
-    # names like `pyproject.toml` or `open_in_default_app`.
-    text = f"**{commit.scope}**: {commit.text}" if commit.scope else commit.text
+def _capitalized(text: str) -> str:
+    """
+    The description as a sentence, unless its first word is an identifier.
 
-    # GitHub turns the hash into a link to the commit on its own.
-    return f"- {text} ({commit.hash})"
+    Capitalising blindly would turn `pyproject.toml` into `Pyproject.toml` and
+    `open_in_default_app` into something that no longer names anything, so a
+    first word carrying a dot, an underscore or a backtick is left alone.
+    """
+    first = text.split(" ", 1)[0]
+
+    if not first or not first[0].islower() or set("._`(/") & set(first):
+        return text
+
+    return text[0].upper() + text[1:]
 
 
-def _block(title: str, commits: Sequence[Commit], folded: bool) -> str:
-    lines = "\n".join(_line(commit) for commit in commits)
+def _line(commit: Commit, slug: Optional[str] = None) -> str:
+    description = _capitalized(commit.text)
+    body = f"**{commit.scope}:** {description}" if commit.scope else description
 
-    if folded:
-        return f"<details>\n<summary>{title} ({len(commits)})</summary>\n\n{lines}\n\n</details>"
+    # An explicit link rather than a bare hash: GitHub turns one into the other
+    # on a release page, but these notes are also written to the job summary and
+    # read from the terminal, where a bare hash is just seven characters.
+    reference = (
+        f"([{commit.hash}](https://github.com/{slug}/commit/{commit.hash}))"
+        if slug
+        else f"({commit.hash})"
+    )
+
+    return f"* {body} {reference}"
+
+
+def _block(title: str, commits: Sequence[Commit], slug: Optional[str] = None) -> str:
+    lines = "\n".join(_line(commit, slug) for commit in commits)
 
     return f"### {title}\n\n{lines}"
 
 
-def _section_order() -> List[Tuple[str, bool]]:
+def _section_order() -> List[str]:
     # What breaks compatibility goes first: it is what may force someone to do
     # something before updating.
-    return [(BREAKING_TITLE, False)] + [(title, folded) for title, _, folded in SECTIONS]
+    return [BREAKING_TITLE] + [title for title, _ in SECTIONS]
 
 
 def build_notes(
@@ -308,42 +347,195 @@ def build_notes(
     tag: str,
     previous: Optional[str],
     slug: Optional[str] = None,
+    highlights: Optional[str] = None,
 ) -> str:
-    # Installing goes on top: most people opening a release came to download the
-    # app, not to read the changelog. The warning goes before that, when it
-    # applies: whoever downloads an alpha has to know before fetching a binary.
-    parts = [PRERELEASE_WARNING] if is_prerelease(tag) else []
-    parts += [INSTALL, "## Changes"]
+    """
+    The release page, in the order someone reads it.
 
-    if not commits:
-        parts.append(f"No changes recorded{f' since {previous}' if previous else ''}.")
-    else:
-        if previous is None:
-            parts.append("First published version.")
+    The summary goes first: it is two or three lines and it is the only part
+    that answers "what does this version give me". Install follows, because most
+    people opening a release came to download the app. The commit log goes last,
+    folded when there is a summary to fold it under — six commits saying
+    "implement page preview" are the record of the work, not a description of
+    it, and they should not be the first thing on the page.
+    """
+    parts: List[str] = []
 
-        groups = group(commits)
+    if is_prerelease(tag):
+        parts.append(PRERELEASE_WARNING.format(version=base_version(tag)))
 
-        for title, folded in _section_order():
-            if title in groups:
-                parts.append(_block(title, groups[title], folded))
+    summary = summary_block(tag, highlights)
+    if summary:
+        parts.append(summary)
 
-    link = _comparison_link(tag, previous, slug)
-    if link:
-        parts.append(link)
+    parts.append(INSTALL)
+    parts.extend(
+        _change_blocks(commits, tag, previous, folded=highlights is not None, slug=slug)
+    )
 
     return "\n\n".join(parts) + "\n"
 
 
-def _comparison_link(tag: str, previous: Optional[str], slug: Optional[str]) -> Optional[str]:
-    if not slug:
-        return None
+def _change_blocks(
+    commits: Sequence[Commit],
+    tag: str,
+    previous: Optional[str],
+    folded: bool,
+    slug: Optional[str] = None,
+) -> List[str]:
+    """
+    The commit log, either as the page's main content or as a detail underneath.
 
+    Breaking changes never fold: they are the one thing that can make an update
+    cost someone work, and they have to be visible without a click.
+    """
+    heading = _changes_heading(tag, previous, slug)
+
+    if not commits:
+        since = f" since {previous}" if previous else ""
+        return [f"{heading}\n\nNo changes recorded{since}."]
+
+    groups = group(commits)
+    blocks: List[str] = []
+
+    if BREAKING_TITLE in groups:
+        blocks.append(_block(BREAKING_TITLE, groups[BREAKING_TITLE], slug))
+
+    sections = [
+        _block(title, groups[title], slug)
+        for title in _section_order()
+        if title in groups and title != BREAKING_TITLE
+    ]
+
+    if previous is None:
+        sections.insert(0, "First published version.")
+
+    if not sections:
+        return blocks
+
+    if not folded:
+        return blocks + [heading] + sections
+
+    body = "\n\n".join([heading] + sections)
+    count = len(commits)
+
+    return blocks + [
+        f"<details>\n<summary>{CHANGES_SUMMARY.format(count=count)}</summary>\n\n{body}\n\n</details>"
+    ]
+
+
+def _changes_heading(tag: str, previous: Optional[str], slug: Optional[str]) -> str:
+    """
+    `## [0.4.0](compare link) (2026-09-13)`, the shape conventional-changelog
+    writes and everyone has read before.
+
+    The date comes from the tag itself rather than from today: notes can be
+    regenerated months later, and a release should not claim to have happened
+    when someone re-ran the script.
+    """
+    version = version_of_tag(tag)
+    date = tag_date(tag)
+    title = f"[{version}]({_compare_url(tag, previous, slug)})" if slug else version
+
+    return f"## {title}{f' ({date})' if date else ''}"
+
+
+def _compare_url(tag: str, previous: Optional[str], slug: str) -> str:
     base = f"https://github.com/{slug}"
 
-    if previous:
-        return f"**Full changelog**: {base}/compare/{previous}...{tag}"
+    return f"{base}/compare/{previous}...{tag}" if previous else f"{base}/commits/{tag}"
 
-    return f"**Full changelog**: {base}/commits/{tag}"
+
+def tag_date(tag: str) -> Optional[str]:
+    """The day the tag was made, as YYYY-MM-DD."""
+    try:
+        return _git("log", "-1", "--format=%ad", "--date=short", tag)
+    except GitError:
+        return None
+
+
+# =========================
+# The hand-written summary
+# =========================
+
+
+def read_highlights(path: Optional[Path] = None) -> Optional[str]:
+    """
+    The summary held in one file, or None when it holds none.
+
+    The guidance lives in HTML comments so it can be long and blunt without any
+    of it reaching the release page. A file that is nothing but comments counts
+    as empty, which is what `next.md` is right after a version ships.
+
+    A leading `# v0.4.0` is dropped: the archived files carry one so they read as
+    documents on their own, and the release page already says which version it
+    is in its own title.
+    """
+    source = path or HIGHLIGHTS_FILE
+
+    if not source.exists():
+        return None
+
+    stripped = COMMENT_PATTERN.sub("", source.read_text(encoding="utf-8")).strip()
+    stripped = TITLE_PATTERN.sub("", stripped, count=1).strip()
+
+    return stripped or None
+
+
+def highlights_for(tag: str) -> Optional[str]:
+    """
+    The summary that belongs to `tag`, from the file that belongs to it.
+
+    An archived version reads its own file. The version being prepared reads
+    `next.md`, and *only* it: regenerating the notes of an old tag used to pick
+    up whatever was being written for the next version, and publish it as if it
+    had shipped back then.
+
+    "Being prepared" is decided by the package version, which semantic-release
+    bumps to the version it is releasing — so during a release they match, and
+    for any older tag they do not.
+    """
+    for name in (tag, version_of_tag(tag)):
+        archived = HIGHLIGHTS_DIRECTORY / f"{name}.md"
+        if archived.exists():
+            return read_highlights(archived)
+
+    if base_version(tag) == package_version().split("-", 1)[0]:
+        return read_highlights(HIGHLIGHTS_FILE)
+
+    return None
+
+
+def base_version(tag: str) -> str:
+    """
+    `v0.4.0-alpha.1` -> `0.4.0`: the version an alpha is on its way to.
+
+    A test build is easier to place when it says which version it belongs to
+    rather than just calling itself a test build.
+    """
+    return version_of_tag(tag).split("-", 1)[0]
+
+
+def summary_block(tag: str, highlights: Optional[str]) -> Optional[str]:
+    """
+    The summary section, titled for what the tag is.
+
+    A prerelease with nothing written gets no section at all: it is a test build
+    and the warning above already says so. A definitive version says out loud
+    that nobody wrote one, because a release page with no summary is a mistake
+    and hiding it would only make it repeat.
+    """
+    version = base_version(tag)
+
+    if highlights is None:
+        if is_prerelease(tag):
+            return None
+
+        return f"{STABLE_SUMMARY_TITLE.format(version=version)}\n\n{MISSING_SUMMARY_WARNING}"
+
+    title = PRERELEASE_SUMMARY_TITLE if is_prerelease(tag) else STABLE_SUMMARY_TITLE
+
+    return f"{title.format(version=version)}\n\n{highlights}"
 
 
 # =========================
@@ -394,6 +586,93 @@ def check_version(tag: str) -> None:
 # =========================
 
 
+def _readable(path: Path) -> str:
+    """
+    A path as it would be typed, falling back to the absolute one.
+
+    `relative_to` raises when the path is not under the root, and a message that
+    can raise inside `archive_released` would abort a release over a cosmetic
+    detail.
+    """
+    try:
+        return str(path.relative_to(ROOT))
+    except ValueError:
+        return str(path)
+
+
+def archive_highlights(tag: str, directory: Optional[Path] = None) -> int:
+    """
+    Files the summary that was just published and leaves an empty one behind.
+
+    Run after a definitive version, so the next one does not open with the
+    previous one's text still in it. Kept as a command rather than done by the
+    pipeline: it rewrites a file in the repository, and a release that also
+    commits is a release that can fail halfway.
+    """
+    folder = directory or HIGHLIGHTS_DIRECTORY
+    source = folder / "next.md"
+    highlights = read_highlights(source)
+
+    if highlights is None:
+        print(f"Nothing to file: {source} has no summary.", file=sys.stderr)
+        return 1
+
+    target = folder / f"{tag}.md"
+    target.write_text(f"# {tag}\n\n{highlights}\n", encoding="utf-8")
+
+    template = COMMENT_PATTERN.search(source.read_text(encoding="utf-8"))
+    source.write_text(f"{template.group(0)}\n" if template else "", encoding="utf-8")
+
+    print(f"{target}: filed. {source} is empty again.", file=sys.stderr)
+
+    return 0
+
+
+def archive_released(version: Optional[str] = None) -> int:
+    """
+    Files the summary of the version being released, if it is a definitive one.
+
+    Called by semantic-release through `build_command`, which runs **before** the
+    release commit and hands over NEW_VERSION — so the archived file and the
+    emptied `next.md` travel inside the commit that bumps the version, with no
+    second commit and nothing to remember.
+
+    It never fails the release. A build command that exits non-zero aborts the
+    whole thing, and not having written a summary is a reason to be told off, not
+    a reason to stop publishing.
+    """
+    released = version or os.environ.get("NEW_VERSION", "")
+
+    if not released:
+        print(
+            "NEW_VERSION is not set: nothing filed. This runs from semantic-release's "
+            "build_command, which sets it.",
+            file=sys.stderr,
+        )
+        return 0
+
+    # An alpha is the same work still in progress: its summary has to survive
+    # until the definitive version ships.
+    if is_prerelease(released):
+        print(f"{released} is a prerelease: the summary stays for the definitive version.",
+              file=sys.stderr)
+        return 0
+
+    tag = f"v{version_of_tag(released)}"
+
+    if read_highlights() is None:
+        print(
+            f"warning: {_readable(HIGHLIGHTS_FILE)} is empty, so {tag} is being "
+            "published with only its commit log.",
+            file=sys.stderr,
+        )
+        return 0
+
+    archive_highlights(tag)
+
+    return 0
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", nargs="?", help="Release tag (defaults to the one pointing at HEAD)")
@@ -404,7 +683,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         action="store_true",
         help="Do not require the tag to match kobun.__version__",
     )
+    parser.add_argument(
+        "--archive",
+        metavar="TAG",
+        help="File the current summary under docs/release-notes/<TAG>.md and start a new one",
+    )
+    parser.add_argument(
+        "--archive-released",
+        action="store_true",
+        help="File it for the version in NEW_VERSION, if that version is a definitive one",
+    )
     args = parser.parse_args(argv)
+
+    if args.archive_released:
+        return archive_released()
+
+    if args.archive:
+        return archive_highlights(args.archive)
 
     tag = args.tag or tag_of_head()
 
@@ -424,7 +719,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except GitError as error:
         raise SystemExit(f"git failed: {error}")
 
-    notes = build_notes(commits, tag, previous, repository_slug())
+    highlights = highlights_for(tag)
+
+    if highlights is None and not is_prerelease(tag):
+        print(
+            f"warning: no summary in {_readable(HIGHLIGHTS_FILE)}; "
+            f"{tag} will be published with only its commit log.",
+            file=sys.stderr,
+        )
+
+    notes = build_notes(commits, tag, previous, repository_slug(), highlights)
 
     if args.output:
         args.output.write_text(notes, encoding="utf-8")

@@ -32,6 +32,69 @@ So a merge into `develop` gives you installable binaries to try before the
 version is final, and the merge from `develop` into `main` turns the accumulated
 alphas into the stable release.
 
+## The one part that is written by hand
+
+Everything else on this page happens on its own. The **summary** of a release
+does not, and cannot: what a version gives someone is not in its commits.
+
+Look at what eight commits produced before there was a summary:
+
+```
+### New
+- implement page preview functionality with caching and rendering
+- implement page preview functionality with selection feedback and styling updates
+- add selection feedback and page preview functionality in PdfViewModel
+- enhance live page count and improve error messaging in PDF range input
+- improve selection feedback messaging and error handling in page range input
+- ...
+```
+
+Six ways of saying "page preview", in the words of whoever was in the middle of
+writing it. Nobody downloading the app learns anything from that.
+
+So [`docs/release-notes/next.md`](release-notes/next.md) holds a few lines
+about the version being prepared, written **while the work happens** rather than
+on release day, in English like the rest of the page:
+
+```markdown
+### Page preview while splitting
+
+The splitting screen now shows the page you are about to export, beside the
+options. It follows the first page of your selection, and tells you whether the
+page on screen is one of the pages that will be exported.
+```
+
+The generator puts it at the top of the release page and **folds the commit log
+underneath it**, so nothing is hidden and nothing shouts. Without it the log is
+the page, as before.
+
+| | Alpha | Definitive |
+|---|---|---|
+| Summary written | shown as *"what is being tried, on the way to 0.4.0"* | shown as *"what's new in 0.4.0"* |
+| Summary empty | no summary section; the pre-release warning already explains what the build is | the page says one was not written, and the pipeline warns |
+
+Both read the same file: an alpha and the version it leads to are the same work,
+so `0.4.0-alpha.3` and `0.4.0` show the same text. An older tag never picks it
+up — regenerating the notes of `v0.3.0` would otherwise publish whatever is
+being written for the next version.
+
+**Filing it happens on its own.** semantic-release's `build_command` runs
+`--archive-released` just before it commits, so the summary of a definitive
+version moves to `docs/release-notes/v0.4.0.md` and `next.md` is emptied *inside
+the release commit* — no second commit, and nothing to remember. It does nothing
+for a prerelease: an alpha is the same work in progress, and its summary has to
+survive until the definitive version ships.
+
+It can never fail a release. A build command that exits non-zero aborts the whole
+thing, and not having written a summary is a reason to be told off, not a reason
+to stop publishing — so it warns and carries on.
+
+To file one by hand, if it ever needs it:
+
+```bash
+python3 scripts/release_notes.py --archive v0.4.0
+```
+
 ## What the pipeline does
 
 When there is something to publish, it bumps the version in
@@ -116,10 +179,15 @@ touches no branch, so the ruleset never sees it and `GITHUB_TOKEN` is enough.
 semantic-release's own format, written by the tool.
 
 The GitHub release body is the **shop window**, written by
-[`scripts/release_notes.py`](../scripts/release_notes.py): it leads with the
-install instructions, groups changes under plain headings (*New*, *Fixes*,
-*Performance*), folds `refactor:`/`chore:`/`ci:` away in a `<details>`, and warns
-when the download is a pre-release.
+[`scripts/release_notes.py`](../scripts/release_notes.py). It has two layers: the
+hand-written summary described above, and under it the generated log.
+
+That log follows the shape conventional-changelog writes, because it is the one
+everybody has already read: a `## [0.4.0](compare link) (date)` heading, then
+*Features*, *Bug Fixes*, *Performance Improvements*, *Documentation*, *Tests*,
+*Maintenance*, with each entry as `* **scope:** Description ([hash](link))`.
+Nothing is hidden — housekeeping gets a section rather than disappearing, since
+"there were no changes" and "the changes were internal" are different things.
 
 It also fixes something the record cannot: semantic-release attributes each
 commit to the tag that first published it, so a stable release that follows a
