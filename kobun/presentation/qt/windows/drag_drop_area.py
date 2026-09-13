@@ -7,6 +7,16 @@ from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QPushButton, QVBoxLay
 PLACEHOLDER = "Arrastrá un PDF acá"
 HINT = "o hacé clic en Seleccionar archivo"
 
+EMPTY_HEIGHT = 172
+"""Tall while it is the thing to aim at: an empty area asking to be dropped on
+should be an obvious target."""
+
+LOADED_HEIGHT = 122
+"""Shorter once a file is open. Not shorter than this: the name, the details and
+the button need it, and below it the button ends up against the dashed border. Its job is then to name the document and offer to
+replace it, and the height it kept was taken from the page preview beside the
+options, which is the part with something to show."""
+
 
 class DragDropArea(QFrame):
     """
@@ -24,7 +34,8 @@ class DragDropArea(QFrame):
         super().__init__(parent)
         self.setObjectName("DropArea")
         self.setAcceptDrops(True)
-        self.setMinimumHeight(172)
+        self.setMinimumHeight(EMPTY_HEIGHT)
+        self.setMaximumHeight(EMPTY_HEIGHT)
         self.setProperty("dragActive", False)
 
         layout = QVBoxLayout(self)
@@ -51,10 +62,21 @@ class DragDropArea(QFrame):
     def show_document(self, filename: str, details: str) -> None:
         self.label_file.setText(filename)
         self.label_details.setText(details)
+        self._set_height(LOADED_HEIGHT)
 
     def show_placeholder(self) -> None:
         self.label_file.setText(PLACEHOLDER)
         self.label_details.setText(HINT)
+        self._set_height(EMPTY_HEIGHT)
+
+    def _set_height(self, height: int) -> None:
+        """
+        Fixed rather than minimum: with only a minimum the layout hands the area
+        whatever is left over, and it grows back to fill the space the preview
+        was meant to get.
+        """
+        self.setMinimumHeight(height)
+        self.setMaximumHeight(height)
 
     # =========================
     # Drag & drop

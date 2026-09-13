@@ -12,21 +12,16 @@ cases PDF viewers handle badly: three chapters out of a 600 page book in one
 pass, or every figure in a chapter without screenshotting them one by one.
 
 Written in Python with **PySide6 (Qt)** and **PyMuPDF**, on a layered
-architecture where the domain knows neither of them: **7,300 lines of code held
-up by 7,800 of tests, 546 of which run with no dependencies installed at all.**
+architecture where the domain knows neither of them: **8,700 lines of code held
+up by 9,400 of tests, 609 of which run with no dependencies installed at all.**
 
-|                                                           |                                                             |
-| --------------------------------------------------------- | ----------------------------------------------------------- |
-| ![Kobun, light theme](assets/screenshots/split-light.png) | ![Kobun, yozora theme](assets/screenshots/split-yozora.png) |
+| Splitting, with the page in view | The same screen, dark |
+| -------------------------------- | --------------------- |
+| ![Kobun splitting a PDF, showing the page preview beside the page range](assets/screenshots/split-light.png) | ![The same screen in the Yozora theme](assets/screenshots/split-yozora.png) |
 
-<!--
-The two captures above are placeholders taken headless, so they show an empty
-window. Replace the files with real ones —a PDF loaded, a range typed, the
-history with actual exports— keeping the same names:
-    assets/screenshots/split-light.png
-    assets/screenshots/split-yozora.png
-    assets/screenshots/history-yozora.png
--->
+| Extracting images and figures | Export history |
+| ----------------------------- | -------------- |
+| ![Kobun's extraction screen, set to pull images and vector figures out of a page range](assets/screenshots/extract-light.png) | ![Kobun's export history, listing split PDFs and extracted folders](assets/screenshots/history-yozora.png) |
 
 ---
 
@@ -73,6 +68,25 @@ kobun
 - Overlapping or adjacent ranges are merged automatically — no duplicate pages
 - Page indices are 1-based and inclusive, as printed in the document
 - Output metadata derived from the source document, traceable back to it
+- **A live count while you type**: "6 páginas" as you write `1-5,10`, and
+  "8 páginas: 1-8" when overlapping ranges get merged, so a selection that covers
+  fewer pages than it looks like does not read as a bug
+- A range still being typed is not shouted at: `1-` says which number is missing
+  in the ordinary text colour, because "1-5" is reached by way of "1-" and every
+  range would otherwise flash an error at the person writing it
+- **A page preview filling its own column** beside the options, which follows the
+  first page of the selection and says whether the page on screen is one of the
+  pages that will be exported. Arrows step through the whole document; a page
+  already rendered comes back from a cache instead of being painted again
+- **"Ver más grande"** ([shown here](assets/screenshots/preview-light.png)) opens
+  the page at reading size in a window shaped to the page —tall for a portrait
+  page, wide for a landscape one— and sized to the screen. It is modeless and points at the same state as the thumbnail, so both
+  always show the same page and stepping in one moves the other. The render
+  resolution follows what the window can actually display, so it is neither
+  wasted on a laptop nor soft on a 4K panel
+- A range the document cannot satisfy is explained where it is typed —"La página
+  20 no existe: este PDF llega hasta la 12"— and keeps the button disabled,
+  instead of failing with a dialog after the click
 
 ### Extracting images
 
@@ -129,6 +143,8 @@ kobun
 
 - Drag & drop, or pick a file from the system dialog. It also opens a PDF passed
   on the command line or chosen through the desktop's "Open with"
+- The window opens at as much of the screen as it needs and no more, so the
+  preview is not width-limited on a laptop nor a small square on a large monitor
 - Long operations run on a worker thread, so the window never freezes
 - **When an export finishes** a result card names what was produced and offers
   to open it or show it in its folder, and the taskbar entry asks for attention
@@ -242,11 +258,12 @@ Done:
       whole pages rendered to PNG
 - [x] Result card with "open" and "show in folder", plus a taskbar notice when
       an export finishes out of focus
+- [x] Page preview before splitting, following the selection and flagging whether
+      the page on screen is included, with an enlarged view for reading it
+- [x] Live page count and range explanation while typing a selection
 
 Next:
 
-- [ ] Page preview before splitting
-- [ ] Live page count while typing a selection
 - [ ] Repeat an export from the history (the selection is already stored as a
       Value Object precisely for this)
 - [ ] Table extraction to CSV — `find_tables()` exists in PyMuPDF, but detection

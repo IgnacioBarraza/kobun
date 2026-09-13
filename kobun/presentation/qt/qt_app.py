@@ -11,6 +11,9 @@ from kobun.application.use_cases.list_history_use_case import ListHistoryUseCase
 from kobun.application.use_cases.load_pdf_use_case import LoadPdfUseCase
 from kobun.application.use_cases.record_extraction_use_case import RecordExtractionUseCase
 from kobun.application.use_cases.record_split_use_case import RecordSplitUseCase
+from kobun.application.use_cases.render_page_preview_use_case import (
+    RenderPagePreviewUseCase,
+)
 from kobun.application.use_cases.split_pdf_use_case import SplitPdfUseCase
 from kobun.domain.pdf.services.asset_extractor_service import AssetExtractorService
 from kobun.domain.pdf.services.pdf_splitter_service import PdfSplitterService
@@ -23,6 +26,7 @@ from kobun.infrastructure.repositories.json_preferences_repository import (
     JsonPreferencesRepository,
 )
 from kobun.infrastructure.repositories.pdf_asset_extractor_impl import PyMuPdfAssetExtractor
+from kobun.infrastructure.repositories.pdf_page_renderer_impl import PyMuPdfPageRenderer
 from kobun.infrastructure.repositories.pdf_repository_impl import PyMuPdfRepository
 from kobun.infrastructure.ui.theme_loader import JsonThemeSource
 from kobun.presentation.qt.app_icon import load_app_icon
@@ -83,6 +87,9 @@ class KobunApplication:
                 file_storage=file_storage,
             ),
             record_extraction_use_case=RecordExtractionUseCase(self._history_repository),
+            preview_use_case=RenderPagePreviewUseCase(
+                pdf_repository, PyMuPdfPageRenderer(engine, opener)
+            ),
         )
 
     def build_window(self) -> MainWindow:

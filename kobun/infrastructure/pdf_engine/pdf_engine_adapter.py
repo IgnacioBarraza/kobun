@@ -292,6 +292,32 @@ class PdfEngineAdapter:
 
         return pixmap.tobytes("png"), pixmap.width, pixmap.height
 
+    def render_page_to_width(
+        self,
+        document: Document,
+        page_number: int,
+        target_width: int,
+    ) -> Tuple[bytes, int, int]:
+        """
+        A page painted so it comes out `target_width` pixels across.
+
+        Sized by a zoom factor derived from the page's own width instead of by a
+        resolution: a preview has to fit a panel, and pages are not all the same
+        size —A4, letter, a slide, a scanned receipt— so the same dpi would give
+        each of them a different width.
+
+        :param page_number: 1-based page.
+        :return: (data, width, height).
+        """
+        page = document.load_page(page_number - 1)
+        page_width = page.rect.width
+
+        # A degenerate page rect would make the zoom explode or divide by zero.
+        zoom = (target_width / page_width) if page_width > 0 else 1.0
+        pixmap = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+
+        return pixmap.tobytes("png"), pixmap.width, pixmap.height
+
     def render_page_png(self, document: Document, page_number: int, dpi: int) -> Tuple[bytes, int, int]:
         """
         A whole page painted into a PNG: vectors, text and images together.

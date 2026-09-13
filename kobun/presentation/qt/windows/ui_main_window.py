@@ -16,7 +16,23 @@ import kobun
 from kobun.presentation.qt.windows.drag_drop_area import DragDropArea
 from kobun.presentation.qt.windows.export_result_card import ExportResultCard
 from kobun.presentation.qt.windows.extract_options_widget import ExtractOptionsWidget
+from kobun.presentation.qt.windows.page_preview_widget import PagePreviewWidget
 from kobun.presentation.qt.windows.split_options_widget import SplitOptionsWidget
+
+PREFERRED_SIZE = (1180, 820)
+"""What the window opens at when the screen allows it.
+
+Chosen against the split screen's two columns: below this the page preview is
+width-limited and leaves slack under it, and above it the page already fills the
+column's height."""
+
+MINIMUM_SIZE = (940, 620)
+"""Below this the options column cannot hold the destination row —a field plus
+an "Examinar" button— without squeezing it."""
+
+SCREEN_FRACTION = 0.92
+"""How much of the usable screen the preferred size may take. A window taller
+than the screen is worse than a smaller window."""
 
 SPLIT_PAGE = 0
 EXTRACT_PAGE = 1
@@ -34,7 +50,8 @@ class Ui_MainWindow:
     def setupUi(self, MainWindow) -> None:
         MainWindow.setObjectName("MainWindow")
         MainWindow.setWindowTitle("Kobun")
-        MainWindow.resize(1000, 680)
+        MainWindow.setMinimumSize(*MINIMUM_SIZE)
+        self._size_window(MainWindow)
 
         self.central_widget = QWidget(MainWindow)
         root = QHBoxLayout(self.central_widget)
@@ -45,6 +62,27 @@ class Ui_MainWindow:
         root.addWidget(self._build_content(), stretch=1)
 
         MainWindow.setCentralWidget(self.central_widget)
+
+    @staticmethod
+    def _size_window(MainWindow) -> None:
+        """
+        Opens at the preferred size, or at as much of the screen as there is.
+
+        A fixed size was leaving the preview width-limited on a laptop and
+        smaller than it needed to be on a large monitor; asking the screen is
+        what makes one number right everywhere.
+        """
+        width, height = PREFERRED_SIZE
+        screen = MainWindow.screen()
+
+        if screen is not None:
+            usable = screen.availableGeometry()
+            width = min(width, int(usable.width() * SCREEN_FRACTION))
+            height = min(height, int(usable.height() * SCREEN_FRACTION))
+
+        MainWindow.resize(
+            max(width, MINIMUM_SIZE[0]), max(height, MINIMUM_SIZE[1])
+        )
 
     # =========================
     # Sidebar
@@ -161,33 +199,59 @@ class Ui_MainWindow:
         return self.content_area
 
     def _build_split_page(self) -> QWidget:
+        """
+        Two columns: what to export on the left, what it looks like on the right.
+
+        The drop area lives **inside** the left column rather than spanning the
+        top. It used to span, which left the preview starting halfway down the
+        screen with a tall column of dead space under the fields — a panel parked
+        in whatever room was left over. With the page filling the right column
+        top to bottom, the screen is about the document and the controls sit
+        beside it.
+        """
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
+        layout.setSpacing(16)
 
         self.title_split = QLabel("Dividir documento")
         self.title_split.setObjectName("Title")
         layout.addWidget(self.title_split)
 
-        self.drop_area = DragDropArea()
-        layout.addWidget(self.drop_area)
+        columns = QHBoxLayout()
+        columns.setSpacing(20)
 
-        layout.addWidget(self._hairline())
+        controls = QVBoxLayout()
+        controls.setContentsMargins(0, 0, 0, 0)
+        controls.setSpacing(16)
+
+        self.drop_area = DragDropArea()
+        controls.addWidget(self.drop_area)
+
+        controls.addWidget(self._hairline())
 
         self.split_options = SplitOptionsWidget()
-        layout.addWidget(self.split_options)
+        controls.addWidget(self.split_options)
 
-        layout.addStretch()
+        # Keeps the fields at the top of their column instead of spreading them
+        # down to match the preview's height.
+        controls.addStretch()
 
         self.split_result = ExportResultCard()
-        layout.addWidget(self.split_result)
+        controls.addWidget(self.split_result)
 
         self.btn_process = QPushButton("DIVIDIR PDF")
         self.btn_process.setObjectName("PrimaryButton")
         self.btn_process.setMinimumHeight(44)
         self.btn_process.setEnabled(False)
-        layout.addWidget(self.btn_process)
+        controls.addWidget(self.btn_process)
+
+        columns.addLayout(controls, stretch=6)
+
+        self.split_preview = PagePreviewWidget()
+        columns.addWidget(self.split_preview, stretch=5)
+
+        layout.addLayout(columns, stretch=1)
 
         return page
 
