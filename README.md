@@ -69,8 +69,11 @@ kobun
 - Page indices are 1-based and inclusive, as printed in the document
 - Output metadata derived from the source document, traceable back to it
 - **A live count while you type**: "6 páginas" as you write `1-5,10`, and
-  "8 páginas · se toma 1-8" when overlapping ranges get merged, so a selection
-  that covers fewer pages than it looks like does not read as a bug
+  "8 páginas: 1-8" when overlapping ranges get merged, so a selection that covers
+  fewer pages than it looks like does not read as a bug
+- A range still being typed is not shouted at: `1-` says which number is missing
+  in the ordinary text colour, because "1-5" is reached by way of "1-" and every
+  range would otherwise flash an error at the person writing it
 - **A page preview filling its own column** beside the options, which follows the
   first page of the selection and says whether the page on screen is one of the
   pages that will be exported. Arrows step through the whole document; a page
@@ -81,9 +84,9 @@ kobun
   always show the same page and stepping in one moves the other. The render
   resolution follows what the window can actually display, so it is neither
   wasted on a laptop nor soft on a 4K panel
-- A range the document cannot satisfy is explained where it is typed —"El PDF
-  tiene 12 páginas y pediste hasta la 20"— and keeps the button disabled, instead
-  of failing with a dialog after the click
+- A range the document cannot satisfy is explained where it is typed —"La página
+  20 no existe: este PDF llega hasta la 12"— and keeps the button disabled,
+  instead of failing with a dialog after the click
 
 ### Extracting images
 
