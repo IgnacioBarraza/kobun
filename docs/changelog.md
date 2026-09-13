@@ -2,6 +2,40 @@
 
 <!-- version list -->
 
+## v0.4.0-alpha.1 (2026-09-13)
+
+### Documentation
+
+- Update README with new features and improvements, including live page count and page preview
+  ([`1cb03a4`](https://github.com/IgnacioBarraza/kobun/commit/1cb03a4be3134427c1b300b153843ad3b4a430ae))
+
+### Features
+
+- Add new screenshot assets for light and yozora themes
+  ([`4d86add`](https://github.com/IgnacioBarraza/kobun/commit/4d86add22c15b73971bb8a97e75335d612bc7552))
+
+- Add page validation and improve error messages in selection rules
+  ([`d91bda3`](https://github.com/IgnacioBarraza/kobun/commit/d91bda3462c49901b969ec339d9bb1cb71966356))
+
+- Add selection feedback and page preview functionality in PdfViewModel
+  ([`ae2fb13`](https://github.com/IgnacioBarraza/kobun/commit/ae2fb138c17ffa24f22c36a1c8036050349d896b))
+
+- Enhance error messaging for page range input and improve selection feedback
+  ([`bca068c`](https://github.com/IgnacioBarraza/kobun/commit/bca068cd89b56843d98c9cd41e1d81f235ed88ad))
+
+- Enhance live page count and improve error messaging in PDF range input
+  ([`a9e0a8b`](https://github.com/IgnacioBarraza/kobun/commit/a9e0a8bc548a510eaa232e76182603a18ce5dfd4))
+
+- Implement page preview functionality with caching and rendering
+  ([`a5e3a4f`](https://github.com/IgnacioBarraza/kobun/commit/a5e3a4f5983cdda97cd6eadaa493a3cb2639eb58))
+
+- Implement page preview functionality with selection feedback and styling updates
+  ([`170fad9`](https://github.com/IgnacioBarraza/kobun/commit/170fad9ebea73306018824af55933761b8dbbbc8))
+
+- Improve selection feedback messaging and error handling in page range input
+  ([`666cc05`](https://github.com/IgnacioBarraza/kobun/commit/666cc055fdd0e98c8d00c39d0af3023ead6455f1))
+
+
 ## v0.3.0 (2026-09-11)
 
 
