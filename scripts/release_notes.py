@@ -628,6 +628,25 @@ def archive_highlights(tag: str, directory: Optional[Path] = None) -> int:
     return 0
 
 
+def _stage(path: Path) -> None:
+    """
+    Puts a path in the index, so the release commit carries it.
+
+    semantic-release commits whatever is staged, which is the only hook there is
+    for adding a file to that commit: its `assets` setting is for files uploaded
+    *to the release page*, and pointing it at this folder failed the release with
+    "Is a directory" after the release had already been created.
+
+    A failure here is reported and swallowed: the summary is already filed on
+    disk, and refusing to publish over an unstaged file would be worse than the
+    file being committed by hand afterwards.
+    """
+    try:
+        _git("add", "--", str(path))
+    except GitError as error:
+        print(f"warning: could not stage {_readable(path)}: {error}", file=sys.stderr)
+
+
 def archive_released(version: Optional[str] = None) -> int:
     """
     Files the summary of the version being released, if it is a definitive one.
@@ -669,6 +688,7 @@ def archive_released(version: Optional[str] = None) -> int:
         return 0
 
     archive_highlights(tag)
+    _stage(HIGHLIGHTS_DIRECTORY)
 
     return 0
 

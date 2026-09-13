@@ -100,12 +100,14 @@ major_on_zero = false
 #
 # It does nothing for a prerelease: an alpha is the same work in progress, and
 # its summary has to survive until the definitive version ships.
+#
+# The command stages what it changes itself. `assets` looks like the setting for
+# this and is not: those are files *uploaded to the release page*, so pointing it
+# at a folder failed with "Is a directory" after the release had already been
+# created. semantic-release commits whatever is in the index, so staging is
+# enough and nothing has to be declared here.
 build_command = "python3 scripts/release_notes.py --archive-released"
 
-# Files the release commit carries beyond the version bump and the changelog.
-# The whole folder, because the file being created is named after the version
-# and cannot be listed ahead of time.
-assets = ["docs/release-notes"]
 
 # The message is conventional on purpose: if commit format is ever validated,
 # the one the release writes itself cannot be the one that fails.

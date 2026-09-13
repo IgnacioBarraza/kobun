@@ -569,3 +569,80 @@ def test_archiving_nothing_fails_instead_of_writing_an_empty_file(highlights_dir
 )
 def test_the_base_version_drops_the_prerelease_suffix(tag, expected):
     assert notes.base_version(tag) == expected
+# =========================
+# Filing during a release
+# =========================
+
+
+@pytest.fixture
+def released(highlights_dir, monkeypatch):
+    """
+    The script as semantic-release drives it: NEW_VERSION set, a summary
+    written, and git calls recorded instead of run.
+    """
+    monkeypatch.setattr(notes, "HIGHLIGHTS_DIRECTORY", highlights_dir)
+    monkeypatch.setattr(notes, "HIGHLIGHTS_FILE", highlights_dir / "next.md")
+    write(highlights_dir, "next.md", "<!--\nplantilla\n-->\n\n### Algo nuevo")
+
+    calls = []
+    monkeypatch.setattr(notes, "_git", lambda *args: calls.append(args) or "")
+
+    return calls
+
+
+def test_a_definitive_version_files_its_summary(released, highlights_dir):
+    assert notes.archive_released("0.4.0") == 0
+    assert (highlights_dir / "v0.4.0.md").exists()
+    assert notes.read_highlights(highlights_dir / "next.md") is None
+
+
+def test_a_prerelease_leaves_the_summary_alone(released, highlights_dir):
+    """An alpha is the same work in progress; its summary has to survive."""
+    assert notes.archive_released("0.4.0-alpha.2") == 0
+    assert not (highlights_dir / "v0.4.0-alpha.2.md").exists()
+    assert notes.read_highlights(highlights_dir / "next.md") is not None
+
+
+def test_what_it_files_is_staged_for_the_release_commit(released, highlights_dir):
+    """
+    semantic-release commits whatever is in the index, and that is the only hook
+    for adding a file to its commit. Its `assets` setting looks like the one for
+    this and is not: those are uploaded to the release page, so pointing it at a
+    folder failed the release with "Is a directory".
+    """
+    notes.archive_released("0.4.0")
+
+    assert released == [("add", "--", str(highlights_dir))]
+
+
+def test_a_prerelease_stages_nothing(released):
+    notes.archive_released("0.4.0-alpha.2")
+
+    assert released == []
+
+
+def test_git_failing_does_not_fail_the_release(released, highlights_dir, monkeypatch):
+    """
+    A build command that exits non-zero aborts the release. The summary is
+    already on disk, and refusing to publish over an unstaged file would be
+    worse than committing it by hand afterwards.
+    """
+    def explode(*_args):
+        raise notes.GitError("index.lock exists")
+
+    monkeypatch.setattr(notes, "_git", explode)
+
+    assert notes.archive_released("0.4.0") == 0
+    assert (highlights_dir / "v0.4.0.md").exists()
+
+
+def test_no_summary_written_does_not_fail_the_release(released, highlights_dir):
+    """Being told off is the right response, not refusing to publish."""
+    write(highlights_dir, "next.md", "<!--\nplantilla\n-->")
+
+    assert notes.archive_released("0.4.0") == 0
+
+
+def test_without_the_version_it_does_nothing_quietly(released):
+    """Run by hand by mistake; it only ever has NEW_VERSION from the pipeline."""
+    assert notes.archive_released("") == 0
