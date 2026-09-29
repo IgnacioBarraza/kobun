@@ -7,18 +7,20 @@ from PySide6.QtWidgets import QListWidgetItem, QMainWindow
 from kobun.application.interfaces.history_repository import HistoryRepository
 from kobun.application.services.theme_service import ThemeService
 from kobun.domain.history.value_objects.export_kind import ExportKind
-from kobun.domain.pdf.exceptions.invalid_page_range_exception import InvalidPageRangeException
 from kobun.domain.pdf.value_objects.extraction_mode import ExtractionMode
-from kobun.domain.pdf.value_objects.page_selection import PageSelection
-from kobun.presentation import error_messages, formatting
-from kobun.presentation.qt import dialogs
+from kobun.presentation import error_messages, formatting, selection_feedback
+from kobun.presentation.qt import dialogs, styling
 from kobun.presentation.qt.app_icon import load_app_icon
+from kobun.presentation.qt.windows.page_preview_dialog import PagePreviewDialog
 from kobun.presentation.qt.styles.style_generator import StyleGenerator
 from kobun.presentation.qt.windows.ui_main_window import (
     EXTRACT_PAGE,
     HISTORY_PAGE,
     SPLIT_PAGE,
     Ui_MainWindow,
+)
+from kobun.application.use_cases.render_page_preview_use_case import (
+    DEFAULT_PREVIEW_WIDTH,
 )
 from kobun.presentation.viewmodels.pdf_view_model import PdfViewModel
 
@@ -93,6 +95,19 @@ class MainWindow(QMainWindow):
         # the card shows text, it does not hold paths.
         self._last_split_output: Optional[Path] = None
         self._last_extract_output: Optional[Path] = None
+
+        # The page the selection last pulled the preview to. Without it the
+        # preview would snap back on every keystroke, so navigating away from a
+        # selection to look at a neighbouring page would be impossible.
+        self._preview_followed_page: Optional[int] = None
+
+        # Built on first use and kept: reopening it should come back to the size
+        # and place the user left it at.
+        self._preview_dialog: Optional[PagePreviewDialog] = None
+
+        # Shape of the page last rendered, so the enlarged window can be sized
+        # to it instead of to a guess.
+        self._preview_aspect: Optional[float] = None
 
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -175,6 +190,10 @@ class MainWindow(QMainWindow):
         ui.extract_options.mode_changed.connect(self._on_extract_mode_changed)
         ui.btn_extract_process.clicked.connect(self._on_extract_requested)
 
+        ui.split_preview.previous_requested.connect(lambda: self._step_preview(-1))
+        ui.split_preview.next_requested.connect(lambda: self._step_preview(1))
+        ui.split_preview.enlarge_requested.connect(self._open_preview_dialog)
+
         ui.split_result.open_requested.connect(self._open_last_split)
         ui.split_result.reveal_requested.connect(self._reveal_last_split)
         ui.extract_result.reveal_requested.connect(self._reveal_last_extraction)
@@ -188,6 +207,10 @@ class MainWindow(QMainWindow):
         self._view_model.document_loaded.connect(self._on_document_loaded)
         self._view_model.split_succeeded.connect(self._on_split_succeeded)
         self._view_model.extract_succeeded.connect(self._on_extract_succeeded)
+        self._view_model.preview_page_changed.connect(self._on_preview_page_changed)
+        self._view_model.preview_ready.connect(self._on_preview_ready)
+        self._view_model.preview_failed.connect(self._on_preview_failed)
+
         self._view_model.history_changed.connect(self._render_history)
         self._view_model.busy_changed.connect(self._on_busy_changed)
 
@@ -218,6 +241,10 @@ class MainWindow(QMainWindow):
         # A new document makes the previous results stale: they described a file
         # that is no longer the one on screen.
         self._clear_results()
+        self._preview_followed_page = None
+
+        for view in self._preview_views():
+            view.clear()
 
         self._set_status(f"Abriendo {path.name}...")
         self._view_model.load_document(path)
@@ -232,6 +259,8 @@ class MainWindow(QMainWindow):
         self.ui.extract_options.set_default_parent(document.storage_path.parent)
         self._suggest_extract_destination()
 
+        self._refresh_selection_feedback()
+        self._reset_preview()
         self._set_status(f"{document.filename} listo.")
         self._refresh_actions()
 
@@ -242,17 +271,27 @@ class MainWindow(QMainWindow):
     def _on_selection_changed(self, _text: str) -> None:
         self._refresh_actions()
 
-        selection = self._parse_selection(self.ui.split_options.selection_text)
-        if selection is not None:
+        feedback = self._describe_selection(self.ui.split_options.selection_text)
+        self.ui.split_options.show_selection_feedback(feedback)
+
+        if feedback.selection is not None:
             self.ui.split_options.set_suggested_destination(
-                self._view_model.suggested_output_path(selection)
+                self._view_model.suggested_output_path(feedback.selection)
             )
 
+        self._follow_selection(feedback)
+        self._refresh_preview_membership()
+
     def _on_split_requested(self) -> None:
-        selection = self._parse_selection(self.ui.split_options.selection_text)
-        if selection is None:
-            self._set_status("Revisá el rango de páginas.", error=True)
+        feedback = self._describe_selection(self.ui.split_options.selection_text)
+        if not feedback.is_usable:
+            # The button is disabled in this case, so reaching here means the
+            # keyboard got ahead of the state. Repeating the hint's own wording
+            # beats a second, vaguer message.
+            self._set_status(feedback.message, error=True)
             return
+
+        selection = feedback.selection
 
         self.ui.split_result.clear()
         self._set_status("Procesando...")
@@ -283,11 +322,162 @@ class MainWindow(QMainWindow):
         self._announce_finished()
 
     # =========================
+    # Preview
+    # =========================
+
+    def _reset_preview(self) -> None:
+        """
+        Points the preview at the first page of what is currently selected, or at
+        page one when nothing is.
+        """
+        feedback = self._describe_selection(self.ui.split_options.selection_text)
+        page = feedback.selection.min_page if feedback.is_usable else 1
+
+        self._preview_followed_page = page if feedback.is_usable else None
+        self._view_model.show_preview_page(page)
+
+    def _follow_selection(self, feedback) -> None:
+        """
+        Moves the preview to the first page of the selection, but only when that
+        page has changed.
+
+        The condition is what makes the panel usable: typing "10-15" jumps to
+        page ten once, and then the arrows still work. Re-jumping on every
+        keystroke would pull the user back every time they looked at page eleven.
+        """
+        if not feedback.is_usable:
+            return
+
+        first_page = feedback.selection.min_page
+        if first_page == self._preview_followed_page:
+            return
+
+        self._preview_followed_page = first_page
+        self._view_model.show_preview_page(first_page)
+
+    def _step_preview(self, offset: int) -> None:
+        self._view_model.move_preview(offset)
+
+    def _preview_views(self):
+        """
+        Every view of the preview: the panel, and the enlarged window while it is
+        open.
+
+        They are told the same things in the same order, which is what keeps the
+        two from disagreeing about which page is on screen.
+        """
+        views = [self.ui.split_preview]
+
+        if self._preview_dialog is not None and self._preview_dialog.isVisible():
+            views.append(self._preview_dialog.preview)
+
+        return views
+
+    def _open_preview_dialog(self) -> None:
+        """
+        Opens the page at reading size.
+
+        Modeless, and pointed at the same state as the panel: it is a bigger look
+        at the same page, not a question. While it is open every render is
+        produced at the larger width, because scaling a thumbnail up is what
+        makes an enlarged view look broken.
+        """
+        if not self._view_model.has_document:
+            return
+
+        if self._preview_dialog is None:
+            dialog = PagePreviewDialog(self)
+            dialog.preview.previous_requested.connect(lambda: self._step_preview(-1))
+            dialog.preview.next_requested.connect(lambda: self._step_preview(1))
+            dialog.finished.connect(self._on_preview_dialog_closed)
+            self._preview_dialog = dialog
+
+        self._size_preview_dialog()
+        self._preview_dialog.show()
+        self._preview_dialog.raise_()
+        self._preview_dialog.activateWindow()
+
+        # The window asks for the resolution it can actually display, rather
+        # than a fixed guess that is wasted on a laptop and soft on a 4K panel.
+        self._view_model.set_preview_width(self._preview_dialog.desired_render_width())
+        self._sync_preview_views()
+
+    def _on_preview_dialog_closed(self, _result: int = 0) -> None:
+        """
+        Back to the thumbnail's width, so the next jump while typing stays cheap.
+        """
+        self._view_model.set_preview_width(DEFAULT_PREVIEW_WIDTH)
+
+    def _sync_preview_views(self) -> None:
+        """
+        Brings a view that just opened up to date, without waiting for the next
+        render or keystroke.
+        """
+        page = self._view_model.preview_page
+        if page is None:
+            return
+
+        for view in self._preview_views():
+            view.show_page(page, self._view_model.page_count)
+
+        self._refresh_preview_membership()
+        self._view_model.show_preview_page(page)
+
+    def _on_preview_page_changed(self, page_number: int) -> None:
+        for view in self._preview_views():
+            view.show_page(page_number, self._view_model.page_count)
+
+        self._refresh_preview_membership()
+
+    def _on_preview_ready(self, preview) -> None:
+        self._preview_aspect = preview.aspect_ratio or None
+
+        for view in self._preview_views():
+            view.show_preview(preview)
+
+    def _size_preview_dialog(self) -> None:
+        if self._preview_dialog is None:
+            return
+
+        if self._preview_aspect is None:
+            self._preview_dialog.size_to(self)
+        else:
+            self._preview_dialog.size_to(self, self._preview_aspect)
+
+    def _on_preview_failed(self, error: Exception) -> None:
+        """
+        Reported inside the panel and in the status bar, not through a dialog: a
+        page that cannot be painted is a broken preview, not a failed export, and
+        the user did not ask for it in the first place.
+        """
+        for view in self._preview_views():
+            view.show_failure()
+
+        self._report_minor_error(error)
+
+    def _refresh_preview_membership(self) -> None:
+        """
+        Whether the page on screen is one of the pages that will be exported.
+        """
+        page = self._view_model.preview_page
+        feedback = self._describe_selection(self.ui.split_options.selection_text)
+        included = None
+
+        if page is not None and feedback.is_usable:
+            included = any(page_range.contains(page) for page_range in feedback.selection)
+
+        for view in self._preview_views():
+            view.show_membership(included)
+
+    # =========================
     # Extracting
     # =========================
 
     def _on_extract_selection_changed(self, _text: str) -> None:
         self._refresh_actions()
+        self.ui.extract_options.show_selection_feedback(
+            self._describe_selection(self.ui.extract_options.selection_text)
+        )
 
     def _on_extract_mode_changed(self, _mode) -> None:
         # The suggested folder carries the mode in its name —"_figuras",
@@ -306,11 +496,13 @@ class MainWindow(QMainWindow):
 
     def _on_extract_requested(self) -> None:
         options = self.ui.extract_options
-        selection = self._parse_selection(options.selection_text)
+        feedback = self._describe_selection(options.selection_text)
 
-        if selection is None:
-            self._set_status("Revisá el rango de páginas.", error=True)
+        if not feedback.is_usable:
+            self._set_status(feedback.message, error=True)
             return
+
+        selection = feedback.selection
 
         self.ui.extract_result.clear()
         self._set_status("Extrayendo...")
@@ -407,15 +599,31 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self._report_blocking_error(error)
 
-    @staticmethod
-    def _parse_selection(raw: str) -> Optional[PageSelection]:
-        if not raw:
-            return None
+    def _refresh_selection_feedback(self) -> None:
+        """
+        Recomputed when the document changes: the same text means something
+        different against a 12 page PDF and a 600 page one.
+        """
+        self.ui.split_options.show_selection_feedback(
+            self._describe_selection(self.ui.split_options.selection_text)
+        )
+        self.ui.extract_options.show_selection_feedback(
+            self._describe_selection(self.ui.extract_options.selection_text)
+        )
 
-        try:
-            return PageSelection.parse(raw)
-        except InvalidPageRangeException:
-            return None
+    def _describe_selection(self, raw: str):
+        """
+        What the typed text means for *this* document.
+
+        The page count is what turns "6 páginas" into "the PDF only has 12":
+        without a document loaded the syntax can still be explained, and that is
+        why it is optional.
+        """
+        document = self._view_model.document
+
+        return selection_feedback.describe(
+            raw, document.page_count if document is not None else None
+        )
 
     # =========================
     # History
@@ -545,16 +753,26 @@ class MainWindow(QMainWindow):
         self.ui.progress.setVisible(busy)
         self.ui.split_options.set_enabled(not busy)
         self.ui.extract_options.set_enabled(not busy)
+        for view in self._preview_views():
+            view.set_enabled(not busy)
         self._refresh_actions()
 
     def _refresh_actions(self) -> None:
+        """
+        The buttons are enabled only for a selection this document can satisfy.
+
+        Bounds included, not just syntax: the screen already knows the PDF has
+        twelve pages, so offering to export page twenty and answering with a
+        modal is a worse version of what the hint underneath the field already
+        says.
+        """
         ready = self._view_model.has_document and not self._view_model.is_busy
 
         self.ui.btn_process.setEnabled(
-            ready and self._parse_selection(self.ui.split_options.selection_text) is not None
+            ready and self._describe_selection(self.ui.split_options.selection_text).is_usable
         )
         self.ui.btn_extract_process.setEnabled(
-            ready and self._parse_selection(self.ui.extract_options.selection_text) is not None
+            ready and self._describe_selection(self.ui.extract_options.selection_text).is_usable
         )
 
     def _report_blocking_error(self, error: Exception) -> None:
@@ -575,10 +793,8 @@ class MainWindow(QMainWindow):
             print(f"[ERROR INESPERADO] {error_messages.technical_detail(error)}")
 
     def _set_status(self, message: str, error: bool = False, success: bool = False) -> None:
-        label = self.ui.label_status
-        label.setText(message)
-        label.setObjectName("ErrorText" if error else "SuccessText" if success else "")
-
-        # Changing objectName requires recomputing the widget's style.
-        label.style().unpolish(label)
-        label.style().polish(label)
+        self.ui.label_status.setText(message)
+        styling.apply_text_role(
+            self.ui.label_status,
+            styling.ERROR if error else styling.SUCCESS if success else styling.DEFAULT,
+        )

@@ -388,6 +388,73 @@ class StyleGenerator:
             background: transparent;
         }}
 
+        /* A button that reads as a link: it offers a view, it does not perform
+           an action, and a framed button next to a section label would shout. */
+        QPushButton#LinkButton {{
+            background: transparent;
+            border: none;
+            padding: 2px 4px;
+            color: {primary};
+            font-size: 11px;
+            font-weight: bold;
+        }}
+
+        QPushButton#LinkButton:hover {{
+            color: {primary_hover};
+            text-decoration: underline;
+        }}
+
+        QPushButton#LinkButton:disabled {{
+            color: {text_disabled};
+        }}
+
+        /* The enlarged view is a window of its own, so it paints the background
+           itself instead of inheriting whatever the platform gives a dialog. */
+        QDialog#PreviewDialog {{
+            background-color: {bg};
+        }}
+
+        /* Preview panel: a surface, like the history list, so it reads as a
+           place where something is shown rather than another group of fields. */
+        QFrame#PreviewPanel {{
+            background-color: {surface};
+            border: none;
+            border-radius: {RADIUS_LARGE}px;
+        }}
+
+        /* No background of its own: a portrait page leaves the label taller than
+           the picture, and a filled label turned that leftover into grey bands
+           above and below the page. The page's own edge is painted into the
+           pixmap instead. */
+        QLabel#PreviewImage {{
+            background: transparent;
+            color: {text_secondary};
+            font-size: 11px;
+            padding: 0;
+        }}
+
+        /* Page steppers: square, quiet, and the same height as the text beside
+           them. */
+        QPushButton#StepButton {{
+            background-color: {surface_alt};
+            border: none;
+            border-radius: {RADIUS_SMALL}px;
+            padding: 4px 12px;
+            font-size: 15px;
+            color: {text_primary};
+            min-width: 34px;
+        }}
+
+        QPushButton#StepButton:hover {{
+            background-color: {primary};
+            color: {text_inverse};
+        }}
+
+        QPushButton#StepButton:disabled {{
+            color: {text_disabled};
+            background-color: {surface_alt};
+        }}
+
         /* The history tooltips are long; with no style of their own they
            inherit the system's and turn illegible in a dark theme. */
         QToolTip {{

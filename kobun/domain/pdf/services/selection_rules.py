@@ -38,3 +38,25 @@ def validate_selection(document: PdfDocument, selection: PageSelection) -> None:
             f"Rango fuera de límites: El PDF tiene {document.page_count} páginas, "
             f"pero se pidió hasta la {selection.max_page}."
         )
+def validate_page(document: PdfDocument, page_number: int) -> None:
+    """
+    Ensures a single page exists within the document.
+
+    Separate from `validate_selection` because a preview asks about one page and
+    has no selection to speak of, and because the message a person reads when
+    the page does not exist should not mention ranges.
+
+    :raises InvalidPdfException: If the document itself is unusable.
+    :raises InvalidPageRangeException: If the page is outside the document.
+    """
+    validate_document_for_processing(document)
+
+    if not isinstance(page_number, int) or isinstance(page_number, bool):
+        raise InvalidPageRangeException(
+            f"El número de página tiene que ser entero. Se recibió: {page_number!r}"
+        )
+
+    if page_number < 1 or page_number > document.page_count:
+        raise InvalidPageRangeException(
+            f"La página {page_number} no existe: el PDF tiene {document.page_count}."
+        )

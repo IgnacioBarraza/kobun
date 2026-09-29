@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 
 from kobun.domain.pdf.value_objects.overwrite_policy import OverwritePolicy
 from kobun.domain.pdf.services.pdf_splitter_service import PDF_SUFFIX
+from kobun.presentation import selection_feedback
+from kobun.presentation.qt import styling
 
 POLICY_LABELS = {
     OverwritePolicy.FAIL: "Avisar si el archivo ya existe",
@@ -69,8 +71,12 @@ class SplitOptionsWidget(QWidget):
         self.input_selection.textChanged.connect(self.selection_changed)
         layout.addWidget(self.input_selection)
 
-        self.label_hint = QLabel("Separá los rangos con comas.")
+        # Filled by `show_selection_feedback` on every keystroke. It starts on
+        # the empty-field hint, which is what it says whenever the field is
+        # cleared again.
+        self.label_hint = QLabel(selection_feedback.EMPTY_HINT)
         self.label_hint.setObjectName("SecondaryText")
+        self.label_hint.setWordWrap(True)
         layout.addWidget(self.label_hint)
 
         layout.addSpacing(8)
@@ -199,10 +205,24 @@ class SplitOptionsWidget(QWidget):
         self.input_output.setText(path.name)
         self._suggested_name = path.name
 
+    def show_selection_feedback(self, feedback) -> None:
+        """
+        Reports what the typed selection means, or why it cannot be used.
+
+        The wording comes from `selection_feedback`; the widget only paints it.
+        An error is styled as one so the difference between "6 páginas" and "the
+        PDF only has 12" is visible without reading.
+        """
+        self.label_hint.setText(feedback.message)
+        styling.apply_text_role(
+            self.label_hint, styling.ERROR if feedback.is_error else styling.SECONDARY
+        )
+
     def clear(self) -> None:
         self.input_selection.clear()
         self.input_output.clear()
         self._suggested_name = None
+        self.show_selection_feedback(selection_feedback.describe(""))
 
     def set_enabled(self, enabled: bool) -> None:
         self.input_selection.setEnabled(enabled)

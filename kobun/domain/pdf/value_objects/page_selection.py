@@ -22,7 +22,7 @@ class PageSelection:
 
     def __post_init__(self) -> None:
         if not self.ranges:
-            raise InvalidPageRangeException("A page selection must contain at least one range.")
+            raise InvalidPageRangeException("La selección tiene que incluir al menos un rango.")
 
         object.__setattr__(self, "ranges", self._canonicalize(self.ranges))
 
@@ -54,7 +54,7 @@ class PageSelection:
 
         chunks = [chunk for chunk in normalized.split(",") if chunk]
         if not chunks:
-            raise InvalidPageRangeException("Page selection cannot be empty.")
+            raise InvalidPageRangeException("La selección de páginas no puede estar vacía.")
 
         return cls(ranges=tuple(PageRange.parse(chunk) for chunk in chunks))
 

@@ -77,17 +77,17 @@ def test_parse_error_on_empty_text():
 
 
 def test_parse_error_on_non_numeric_page():
-    with pytest.raises(InvalidPageRangeException, match="Invalid page number"):
+    with pytest.raises(InvalidPageRangeException, match="no es un número de página"):
         PageSelection.parse("1-5,abc")
 
 
 def test_parse_error_on_malformed_range():
-    with pytest.raises(InvalidPageRangeException, match="Invalid page range format"):
+    with pytest.raises(InvalidPageRangeException, match="No se entiende"):
         PageSelection.parse("1-2-3")
 
 
 def test_parse_error_on_inverted_range():
-    with pytest.raises(InvalidPageRangeException, match="cannot be greater than"):
+    with pytest.raises(InvalidPageRangeException, match="está al revés"):
         PageSelection.parse("10-5")
 
 
@@ -97,5 +97,5 @@ def test_parse_error_on_zero_page():
 
 
 def test_empty_selection_is_rejected():
-    with pytest.raises(InvalidPageRangeException, match="at least one range"):
+    with pytest.raises(InvalidPageRangeException, match="al menos un rango"):
         PageSelection(ranges=())
